@@ -1,4 +1,5 @@
 from typing import Literal
+from loguru import logger
 
 
 class LarkBackend:
@@ -50,6 +51,11 @@ def alert(
     for backend in backends:
         if backend == "lark":
             lark_backend = LarkBackend()
+            if lark_backend.lark._webhook_url is None:
+                logger.warning(
+                    "Lark webhook URL is not set. Please set the WEBHOOK_URL environment variable."
+                )
+                return
             lark_backend.publish_alert(title, text, subtitle, level, traceback)
         else:
             raise NotImplementedError(f"Backend '{backend}' is not implemented.")

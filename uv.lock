@@ -1253,7 +1253,7 @@ wheels = [
 
 [[package]]
 name = "slark"
-version = "0.1.27"
+version = "0.1.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "arrow" },
@@ -1264,9 +1264,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests-toolbelt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/78/aa5ef330646ca00132371c4172ac08232a689f4a7aca67f4c7b1a7529a87/slark-0.1.27.tar.gz", hash = "sha256:4a1032f95fe1bce34dc3792e0f172bc2e5473392da354ad8eeaa250ab121df98", size = 103293 }
+sdist = { url = "https://files.pythonhosted.org/packages/76/6c/1632d06e19f3039c5fe4e8310056cf2cfaf4e2812b6ffe0176acefb8dca1/slark-0.1.28.tar.gz", hash = "sha256:f1f08bf5f82cbfadc0752b2339fb39c0c35faa834da4191e6c8e1ddca8ea49b5", size = 103331 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/04/66d843aefb74e4e38cf8196a264eb76f17818967f723cbe14a884ff7dfcd/slark-0.1.27-py3-none-any.whl", hash = "sha256:7e13e55e49ee8200bb1f05455113367623970b2cc01edea1cbb78f8bbfe35d11", size = 155583 },
+    { url = "https://files.pythonhosted.org/packages/d6/35/3d38da087da91451617012b3303ade17d271f48972f01fae293dd96418b2/slark-0.1.28-py3-none-any.whl", hash = "sha256:5c7ac2bc48192acfbf3dd691c9de48c47032beb4cfa072bad5115e0b37d9a9b7", size = 155638 },
 ]
 
 [[package]]
