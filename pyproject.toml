@@ -1,0 +1,22 @@
+[project]
+name = "expr_tracker"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "HSPK", email = "whxway@whu.edu.cn" }]
+requires-python = ">=3.10"
+dependencies = [
+    "jsonlines>=4.0.0",
+ "loguru>=0.7.3",
+ "slark>=0.1.27",
+ "wandb>=0.21.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.30.1",
+]
