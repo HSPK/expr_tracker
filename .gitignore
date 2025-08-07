@@ -10,3 +10,4 @@ wandb/
 .env
 # Virtual environments
 .venv
+test.ipynb
