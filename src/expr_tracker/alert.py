@@ -2,6 +2,17 @@ from typing import Literal
 from loguru import logger
 
 
+def ignore_exception(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"Error occurred in {func.__name__}: {e}")
+            return None
+
+    return wrapper
+
+
 class LarkBackend:
     def __init__(self, **kwargs):
         from slark import Lark
@@ -30,6 +41,7 @@ class LarkBackend:
             )
 
 
+@ignore_exception
 def alert(
     title: str,
     text: str,
