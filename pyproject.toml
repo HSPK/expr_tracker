@@ -12,6 +12,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+et = "expr_tracker.cli:main"
+
 [dependency-groups]
 dev = ["ipykernel>=6.30.1"]
 

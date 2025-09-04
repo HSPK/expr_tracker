@@ -288,7 +288,6 @@ wheels = [
 
 [[package]]
 name = "expr-tracker"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonlines" },
@@ -306,7 +305,7 @@ dev = [
 requires-dist = [
     { name = "jsonlines", specifier = ">=4.0.0" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "slark", specifier = ">=0.1.27" },
+    { name = "slark", specifier = ">=0.1.28" },
     { name = "wandb", specifier = ">=0.21.0" },
 ]
 
