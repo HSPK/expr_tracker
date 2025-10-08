@@ -1,11 +1,6 @@
 from loguru import logger
 from pathlib import Path
-
-
-def custom_json_encoder(obj):
-    if isinstance(obj, Path):
-        return str(obj)
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+from expr_tracker.encoders import jsonable_encoder
 
 
 class JsonlTracker:
@@ -38,7 +33,7 @@ class JsonlTracker:
             with open(self.config_fp, "w") as f:
                 import json
 
-                json.dump(config, f, indent=4, default=custom_json_encoder)
+                json.dump(jsonable_encoder(config), f, indent=4)
         self.print_to_screen = print_to_screen
         self.print_handle = print_handle
         self.current_step = (
