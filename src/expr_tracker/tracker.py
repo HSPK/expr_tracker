@@ -1,6 +1,7 @@
 from typing import Literal
 from contextvars import ContextVar
 from loguru import logger
+import os
 
 _tracker: ContextVar["Tracker | None"] = ContextVar("tracker", default=None)
 
@@ -12,6 +13,10 @@ def get_backend(backend: str | object):
             try:
                 import wandb
 
+                wandb.login(
+                    key=os.getenv("WANDB_API_KEY", None),
+                    host=os.getenv("WANDB_HOST", None),
+                )
                 return wandb
             except ImportError:
                 raise ImportError("WandB backend is not installed.")
