@@ -1,7 +1,8 @@
-from typing import Literal
-from contextvars import ContextVar
-from loguru import logger
 import os
+from contextvars import ContextVar
+from typing import Literal
+
+from loguru import logger
 
 _tracker: ContextVar["Tracker | None"] = ContextVar("tracker", default=None)
 
@@ -134,16 +135,22 @@ def log(metrics: dict, step: int | None = None):
     tracker = _tracker.get()
     if tracker is None:
         raise RuntimeError("Tracker is not initialized. Call init() first.")
-    for b in tracker.backend.values():
-        b.log(metrics, step=step)
+    for backend, t in tracker.backend.items():
+        try:
+            t.log(metrics, step=step)
+        except Exception as e:
+            logger.warning(f"Failed to log metrics to {backend}: {e}")
 
 
 def finish():
     tracker = _tracker.get()
     if tracker is None:
         raise RuntimeError("Tracker is not initialized. Call init() first.")
-    for b in tracker.backend.values():
-        b.finish()
+    for backend, t in tracker.backend.items():
+        try:
+            t.finish()
+        except Exception as e:
+            logger.warning(f"Failed to finish tracker for {backend}: {e}")
     _tracker.set(None)
 
 
@@ -152,9 +159,9 @@ def info():
     if tracker is None:
         raise RuntimeError("Tracker is not initialized. Call init() first.")
     info = {}
-    for b, t in tracker.backend.items():
-        if b == "wandb":
+    for backend, t in tracker.backend.items():
+        if backend == "wandb":
             info["wandb"] = {"url": t.run.url}
-        if b == "jsonl":
+        if backend == "jsonl":
             info["jsonl"] = {"log_dir": t.log_dir.as_posix()}
     return info
