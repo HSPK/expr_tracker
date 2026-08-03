@@ -321,6 +321,30 @@ def jsonable_encoder(
         if isinstance(obj, classes_tuple):
             return encoder(obj)
 
+    # numpy 标量/数组、torch tensor 等既不是 int/float 的子类，也无法被 dict()/vars()
+    # 处理，但都提供 tolist()/item()，转换后再递归编码（如 datetime64 -> datetime）。
+    for method_name in ("tolist", "item"):
+        method = getattr(obj, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            converted = method()
+        except Exception:
+            continue
+        if converted is obj:
+            break
+        return jsonable_encoder(
+            converted,
+            include=include,
+            exclude=exclude,
+            by_alias=by_alias,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+            custom_encoder=custom_encoder,
+            sqlalchemy_safe=sqlalchemy_safe,
+        )
+
     try:
         data = dict(obj)
     except Exception as e:
