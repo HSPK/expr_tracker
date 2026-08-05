@@ -1,55 +1,116 @@
 # Experiment Tracker
 
-A simple experiment tracker that supports `wandb`, `trackio` and local `jsonl` storage. Features include:
+A local-first experiment tracker. Metrics land in a JSONL file you own, stay
+queryable while the run is live, and can trigger alerts from an expression language.
+`wandb` and `trackio` are optional mirrors, not requirements.
 
-## Features
-1. **Multi-Backend Support**: Compatible with `wandb`, `trackio`, and local `jsonl` storage.
-2. **Alert System**: Send alerts via Lark, with email and other platforms to be added.
-3. **Resume Functionality**: Allows resuming experiments using project and name as unique identifiers.
-4. **Simple API**: Provides a straightforward API similar to `wandb`, making it easy to integrate into existing workflows.
+📖 **Documentation: <https://hspk.github.io/expr_tracker/>**
 
-## Usage
-
-Add dependency to your project:
-
-```bash
-uv add expr_tracker
-```
-
-Simple usage example:
 ```python
 import expr_tracker as et
 
-et.init(project="my_project", name="my_experiment", backends=["wandb", "jsonl"])
-et.log({"accuracy": 0.95, "loss": 0.05})
-et.alert("Experiment completed!", text="Your experiment has finished successfully.", subtitle="Experiment Status")
+et.init(project="demo", name="run-1", alert_rules=["zscore(loss[50]) > 3 => error: spike"])
+for step in range(1000):
+    et.log({"loss": loss, "lr": lr})
 et.finish()
+
+et.history(50)                    # the last 50 steps, as dicts
+et.history(-1, output_type="pd")  # everything, as a DataFrame
 ```
 
-### JSONL buffering
+## Why
 
-The `jsonl` backend adapts its buffering to how often you call `log()`, so that
-high-frequency logging doesn't hammer the disk (helpful on network mounts such as
-BlobFuse) while low-frequency logging still lands on disk immediately:
+- **The file is the source of truth.** One JSON object per step, appended to
+  `metrics.jsonl`. No server, no database, no vendor.
+- **History is queryable during the run.** `et.history(n)` answers from an in-memory
+  cache and touches the file only for what it evicted — 227&nbsp;µs for
+  `history(50)` whether the run has 1,000 steps or 100,000.
+- **Alerts are expressions, not callbacks.** `zscore(loss[50]) > 3 or isnan(loss)`
+  is parsed, validated, and evaluated against a rolling window. Rules can be replayed
+  over a finished run to tune thresholds before you trust them.
+- **It stays out of the way.** `log()` costs ~26&nbsp;µs. A failed disk, a dead
+  webhook or an unserialisable value degrades with a warning; none can stop training.
 
-- If the gap since the previous `log()` call is `>= buffer_interval` (default `1.0s`),
-  the call is considered low-frequency and is written straight through.
-- Otherwise records are batched in memory and flushed once `buffer_size` (default `50`)
-  records accumulate.
-- A background timer flushes records that have been buffered for more than
-  `max_buffer_seconds` (default `5.0s`), so a burst that suddenly stops is never stranded
-  in memory. `finish()` and the `atexit` hook flush any remainder.
+## Install
 
-Set `buffer_interval=None` to disable the frequency check, or `max_buffer_seconds=None`
-to disable the background timer. Tune them via `backend_kwargs`:
+```bash
+uv add expr_tracker                 # local-first: click, loguru, pydantic only
+uv add "expr_tracker[wandb]"        # mirror to Weights & Biases
+uv add "expr_tracker[trackio]"      # mirror to trackio
+uv add "expr_tracker[lark]"         # Feishu/Lark alert channel
+uv add "expr_tracker[pandas]"       # history(output_type="pandas")
+uv add "expr_tracker[all]"          # everything
+```
+
+Only the JSONL history is built in. A missing extra is reported with the exact
+install command; it never crashes a run.
+
+## Features
+
+| | |
+| --- | --- |
+| [Logging](https://hspk.github.io/expr_tracker/guide/logging/) | One line per step. Several `log()` calls for one step merge into one row, wandb-compatible `step`/`commit` semantics, numpy and pydantic values handled. |
+| [History](https://hspk.github.io/expr_tracker/guide/history/) | `et.history(n)` during or after the run, offline reads of any run directory, dict/pandas/polars output, bounded in-memory cache with observable hit rate. |
+| [Alerts](https://hspk.github.io/expr_tracker/guide/alerts/) | An expression DSL with rolling windows, three-valued logic (no false alarms during warm-up), a rule state machine, and a watchdog that catches a hung run. |
+| [Channels](https://hspk.github.io/expr_tracker/guide/alerts/#channels) | Lark, Slack, DingTalk, WeCom, generic webhook, email — with rate limiting, dedup, retries and per-channel routing. |
+| [Artifacts](https://hspk.github.io/expr_tracker/guide/artifacts/) | Versioned file sets, deduplicated by content, shared across a project's runs, with lineage. |
+| [Distributed](https://hspk.github.io/expr_tracker/guide/distributed/) | Per-rank shards so concurrent appends cannot corrupt step order; only rank 0 alerts by default. |
+| [CLI](https://hspk.github.io/expr_tracker/guide/cli/) | `et history`, `et rules explain`, `et rules test`, `et alert`. |
+
+## wandb compatibility
+
+Migrating an existing script is usually one line:
 
 ```python
-et.init(
-    project="my_project",
-    name="my_experiment",
-    backends=["jsonl"],
-    backend_kwargs={
-        "jsonl": {"buffer_size": 200, "buffer_interval": 0.5, "max_buffer_seconds": 10},
-    },
-)
+# import wandb as et
+import expr_tracker as et
 ```
+
+`init`, `log`, `finish`, `alert`, `log_artifact`, `use_artifact`, `Artifact`,
+`define_metric`, `run.summary`, `run.step`, `run.dir` and `run.url` keep their wandb
+names and signatures. See the
+[compatibility table](https://hspk.github.io/expr_tracker/guide/backends/#wandb-compatibility).
+
+## Development
+
+```bash
+uv sync --all-extras
+uv run pytest                                   # everything
+uv run pytest -m "not slow and not benchmark"   # the fast suite
+uv run pytest -m benchmark -s                   # timing and memory report
+uv run pytest --cov=expr_tracker                # coverage
+uv run ruff check src tests
+uv run ruff format src tests
+```
+
+### Test layout
+
+| File | Covers |
+| --- | --- |
+| `test_history`, `test_expr_*`, `test_alert_*`, `test_writer_durability`, … | per-module unit tests |
+| `test_correctness.py` | value and type round trips, randomised commit sequences, ordering invariants |
+| `test_cache.py` | that the cache really serves reads: zero-IO assertions, eviction boundaries, warm/cold parity |
+| `test_failure_modes.py` | degradation: write failures, read-only dirs, encoder blow-ups, dead alert backends |
+| `test_e2e.py` | full runs, resume, crash recovery, offline reads, CLI |
+| `test_scenarios.py` | live cross-process reads, alerts during eviction, out-of-order resume |
+| `test_hot_paths.py` | contracts and defaults of `et.log` / `et.history` / summary / alerts |
+| `test_value_encoding.py` | numpy, pydantic, datetime, Path, Enum round trips; output types; query bounds |
+| `test_expr_properties.py` | DSL properties: render round-trip stability, precedence, the whole `M` builder |
+| `test_distributed.py` | rank shards, `alert_on_rank`, real multi-process runs |
+| `test_wandb.py` | real wandb in offline mode: parameter mapping, step alignment, artifacts |
+| `test_trackio.py` | trackio contract, resume mapping, real end-to-end |
+| `test_lark_live.py` | Lark channel; real delivery when `ET_LARK_TEST_WEBHOOK` is set |
+| `test_stress.py` (`slow`) | 100k-row writes, concurrency, cache thrash, write-failure recovery |
+| `test_benchmark.py` (`benchmark`) | throughput, tail latency, query cost, memory stability |
+
+### Docs
+
+```bash
+uv run --group docs mkdocs serve    # preview at localhost:8000
+uv run --group docs mkdocs build    # build into site/
+```
+
+Published to GitHub Pages by `.github/workflows/docs.yaml` on every push to `main`.
+Internals: [`docs/design.md`](docs/design.md) (data model and key invariants) and
+[`docs/architecture.md`](docs/architecture.md) (module map, read/write paths,
+concurrency model).

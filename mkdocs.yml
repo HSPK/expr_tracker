@@ -1,0 +1,66 @@
+site_name: Experiment Tracker
+site_description: A local-first experiment tracker with queryable history and expression-based alerts.
+site_url: https://hspk.github.io/expr_tracker/
+repo_url: https://github.com/HSPK/expr_tracker
+repo_name: HSPK/expr_tracker
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Guide:
+      - Logging metrics: guide/logging.md
+      - Querying history: guide/history.md
+      - Alerts: guide/alerts.md
+      - Artifacts: guide/artifacts.md
+      - Distributed runs: guide/distributed.md
+      - Backends: guide/backends.md
+      - CLI: guide/cli.md
+  - Reference:
+      - Python API: reference/api.md
+      - Configuration: reference/configuration.md
+      - Alert expressions: reference/expressions.md
+  - Internals:
+      - Design: design.md
+      - Architecture: architecture.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HSPK/expr_tracker
