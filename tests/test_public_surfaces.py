@@ -379,3 +379,22 @@ def test_a_rule_can_be_declared_as_a_string_or_a_dict():
     assert _as_rule({"condition": "loss > 1"}).condition == "loss > 1"
     existing = AlertRule(condition="a > 1")
     assert _as_rule(existing) is existing
+
+
+# ====================================================================== package
+
+
+def test_the_package_reports_its_version():
+    import re
+
+    assert isinstance(et.__version__, str)
+    assert re.match(r"^\d+\.\d+\.\d+", et.__version__), et.__version__
+
+
+def test_every_name_in_all_is_importable():
+    missing = [name for name in et.__all__ if not hasattr(et, name)]
+    assert missing == []
+
+
+def test_all_is_sorted_and_unique():
+    assert len(set(et.__all__)) == len(et.__all__)

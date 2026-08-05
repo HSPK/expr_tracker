@@ -1,3 +1,6 @@
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
 from . import tracker
 from .alerts import (
     AlertConfig,
@@ -16,6 +19,11 @@ from .alerts import (
 )
 from .artifacts import Artifact
 from .run import Run
+
+try:
+    __version__ = _version("expr_tracker")
+except PackageNotFoundError:  # running from a source tree without an install
+    __version__ = "0.0.0.dev0"
 
 init = tracker.init
 finish = tracker.finish
@@ -38,6 +46,7 @@ __all__ = [
     "M",
     "Run",
     "WebhookPolicy",
+    "__version__",
     "add_alert_rule",
     "alert",
     "configure_alert",

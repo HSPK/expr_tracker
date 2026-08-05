@@ -2,6 +2,10 @@
 
 Everything below is exported from `expr_tracker`.
 
+```python
+et.__version__   # the installed version
+```
+
 ## Lifecycle
 
 ### `init`
