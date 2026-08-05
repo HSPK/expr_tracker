@@ -11,3 +11,6 @@ wandb/
 # Virtual environments
 .venv
 test.ipynb
+.coverage
+htmlcov/
+site/

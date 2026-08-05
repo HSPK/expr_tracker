@@ -17,12 +17,13 @@ from types import GeneratorType
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 from uuid import UUID
 
-from expr_tracker.types import IncEx
 from pydantic import BaseModel
 from pydantic.color import Color
 from pydantic.networks import AnyUrl, NameEmail
 from pydantic.types import SecretBytes, SecretStr
 from typing_extensions import Annotated, Doc
+
+from expr_tracker.types import IncEx
 
 from ._compat import PYDANTIC_V2, UndefinedType, Url, _model_dump
 
@@ -321,8 +322,9 @@ def jsonable_encoder(
         if isinstance(obj, classes_tuple):
             return encoder(obj)
 
-    # numpy 标量/数组、torch tensor 等既不是 int/float 的子类，也无法被 dict()/vars()
-    # 处理，但都提供 tolist()/item()，转换后再递归编码（如 datetime64 -> datetime）。
+    # numpy scalars/arrays and torch tensors subclass neither int/float nor support
+    # dict()/vars(), but all expose tolist()/item(); convert then re-encode
+    # recursively (e.g. datetime64 -> datetime).
     for method_name in ("tolist", "item"):
         method = getattr(obj, method_name, None)
         if not callable(method):

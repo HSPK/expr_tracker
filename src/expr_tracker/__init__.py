@@ -1,9 +1,57 @@
 from . import tracker
-from .alert import alert
+from .alerts import (
+    AlertConfig,
+    AlertLevel,
+    AlertMessage,
+    AlertRule,
+    ChannelConfig,
+    M,
+    WebhookPolicy,
+    add_alert_rule,
+    alert,
+    configure_alert,
+    list_alert_rules,
+    register_backend,
+    remove_alert_rule,
+)
+from .artifacts import Artifact
+from .run import Run
 
 init = tracker.init
 finish = tracker.finish
 log = tracker.log
 info = tracker.info
+history = tracker.history
+summary = tracker.summary
+get_run = tracker.get_run
+define_metric = tracker.define_metric
+log_artifact = tracker.log_artifact
+use_artifact = tracker.use_artifact
 
-__all__ = ["init", "finish", "log", "info", "alert"]
+__all__ = [
+    "AlertConfig",
+    "AlertLevel",
+    "AlertMessage",
+    "AlertRule",
+    "Artifact",
+    "ChannelConfig",
+    "M",
+    "Run",
+    "WebhookPolicy",
+    "add_alert_rule",
+    "alert",
+    "configure_alert",
+    "define_metric",
+    "finish",
+    "get_run",
+    "history",
+    "info",
+    "init",
+    "list_alert_rules",
+    "log",
+    "log_artifact",
+    "register_backend",
+    "remove_alert_rule",
+    "summary",
+    "use_artifact",
+]

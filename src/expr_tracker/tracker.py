@@ -1,98 +1,20 @@
-import os
-from contextvars import ContextVar
+"""Public API: ``init`` / ``log`` / ``history`` / ``finish`` / ``info``."""
+
+from __future__ import annotations
+
+import threading
+from collections.abc import Sequence
+from pathlib import Path
 from typing import Literal
 
-from loguru import logger
+from .artifacts import Artifact
+from .history import read_history
+from .run import Run, current_run, require_run, set_run
 
-_tracker: ContextVar["Tracker | None"] = ContextVar("tracker", default=None)
-
-
-def get_backend(backend: str | object):
-    if isinstance(backend, str):
-        backend = backend.lower()
-        if backend == "wandb":
-            try:
-                import wandb
-
-                wandb.login(
-                    key=os.getenv("WANDB_API_KEY", None),
-                    host=os.getenv("WANDB_HOST", None),
-                )
-                return wandb
-            except ImportError:
-                raise ImportError("WandB backend is not installed.")
-        elif backend == "jsonl":
-            from .jsonl import JsonlTracker
-
-            return JsonlTracker()
-        elif backend == "trackio":
-            try:
-                import trackio
-
-                return trackio
-            except ImportError:
-                raise ImportError("TrackIO backend is not installed.")
-    else:
-        return backend
+Tracker = Run
 
 
-class Tracker:
-    def __init__(
-        self,
-        project: str,
-        name: str | None = None,
-        entity: str | None = None,
-        dir: str | None = None,
-        notes: str | None = None,
-        tags: list[str] | None = None,
-        resume: bool | Literal["allow", "never", "must", "auto"] | None = "allow",
-        config: dict | None = None,
-        backends: list[Literal["wandb", "jsonl", "trackio"]] = [
-            "wandb",
-            "trackio",
-            "jsonl",
-        ],
-        backend_kwargs: dict[str, dict] | None = None,
-        **kwargs,
-    ):
-        if kwargs:
-            logger.info(
-                f"Unrecognized keyword arguments passed to Tracker: {kwargs}. "
-                "These will be ignored."
-            )
-        self.backend = {b: get_backend(b) for b in backends}
-        if config is None:
-            config = {}
-        if backend_kwargs is None:
-            backend_kwargs = {}
-        for b, t in self.backend.items():
-            if b == "trackio":
-                t.init(
-                    project=project,
-                    name=name,
-                    config=config.update(
-                        {
-                            "trackio.notes": notes,
-                            "trackio.tags": tags,
-                            "trackio.entity": entity,
-                            "trackio.resume": resume,
-                        }
-                    ),
-                    **backend_kwargs.get(b, {}),
-                )
-            else:
-                t.init(
-                    project=project,
-                    name=name,
-                    entity=entity,
-                    dir=dir,
-                    notes=notes,
-                    tags=tags,
-                    resume=resume,
-                    id=name,
-                    config=config,
-                    **backend_kwargs.get(b, {}),
-                )
+_lifecycle = threading.RLock()
 
 
 def init(
@@ -104,64 +26,143 @@ def init(
     tags: list[str] | None = None,
     resume: bool | Literal["allow", "never", "must", "auto"] | None = "allow",
     config: dict | None = None,
-    backends: list[Literal["wandb", "jsonl", "trackio"]] = ["wandb", "jsonl"],
+    backends: Sequence[Literal["wandb", "jsonl", "trackio"]] = ("wandb", "jsonl"),
     backend_kwargs: dict[str, dict] | None = None,
+    print_to_screen: bool = False,
+    alert=None,
+    alert_rules: Sequence = (),
     **kwargs,
-) -> Tracker:
-    """
-    Initialize the tracker with the given parameters.
-    """
-    if _tracker.get() is not None:
-        raise RuntimeError("Tracker is already initialized. Call finish() first.")
+) -> Run:
+    """Initialise the tracker. Local jsonl history is always on, whatever ``backends``.
 
-    tracker = Tracker(
-        project=project,
-        name=name,
-        entity=entity,
-        dir=dir,
-        notes=notes,
-        tags=tags,
-        resume=resume,
-        config=config,
-        backends=backends,
-        backend_kwargs=backend_kwargs,
-        **kwargs,
+    Extra keyword arguments are forwarded to the history store (``cache_bytes``,
+    ``alert_window``, ``max_open_seconds``, ``step_policy``, ``buffer_size``, ...).
+    """
+    # Check, construct and publish atomically: concurrent init would race otherwise
+    with _lifecycle:
+        if current_run() is not None:
+            raise RuntimeError("Tracker is already initialized. Call finish() first.")
+        run = Run(
+            project=project,
+            name=name,
+            entity=entity,
+            dir=dir,
+            notes=notes,
+            tags=tags,
+            resume=resume,
+            config=config,
+            backends=backends,
+            backend_kwargs=backend_kwargs,
+            print_to_screen=print_to_screen,
+            alert=alert,
+            alert_rules=alert_rules,
+            **kwargs,
+        )
+        set_run(run)
+        return run
+
+
+def log(data: dict, step: int | None = None, commit: bool | None = None):
+    """Log metrics; the signature mirrors ``wandb.log``.
+
+    Repeated calls for the same step are merged into a single row.
+    """
+    require_run().log(data, step=step, commit=commit)
+
+
+def history(
+    n: int | None = 50,
+    *,
+    output_type: str = "dict",
+    metrics: Sequence[str] | None = None,
+    step_range: tuple[int | None, int | None] | None = None,
+    include_meta: bool = True,
+    include_open: bool = True,
+    fill_missing: bool = False,
+    dropna: bool = False,
+    run: str | Path | None = None,
+):
+    """Return the last ``n`` steps (``n=-1``/``None`` for everything).
+
+    ``output_type="pandas"`` returns a DataFrame (pandas is an optional extra).
+    Passing ``run`` reads that run directory or file offline, without ``init()``.
+    """
+    if run is not None:
+        return read_history(
+            run,
+            n,
+            output_type=output_type,
+            metrics=metrics,
+            step_range=step_range,
+            include_meta=include_meta,
+            fill_missing=fill_missing,
+            dropna=dropna,
+        )
+    return require_run().history.get(
+        n,
+        output_type=output_type,
+        metrics=metrics,
+        step_range=step_range,
+        include_meta=include_meta,
+        include_open=include_open,
+        fill_missing=fill_missing,
+        dropna=dropna,
     )
-    _tracker.set(tracker)
-    return tracker
 
 
-def log(metrics: dict, step: int | None = None):
-    tracker = _tracker.get()
-    if tracker is None:
-        raise RuntimeError("Tracker is not initialized. Call init() first.")
-    for backend, t in tracker.backend.items():
+def finish(exit_code: int | None = None, quiet: bool | None = None):
+    """Close the active run. ``exit_code``/``quiet`` exist for wandb compatibility."""
+    with _lifecycle:
+        run = require_run()
         try:
-            t.log(metrics, step=step)
-        except Exception as e:
-            logger.warning(f"Failed to log metrics to {backend}: {e}")
+            run.finish(exit_code=exit_code, quiet=quiet)
+        finally:
+            set_run(None)
 
 
-def finish():
-    tracker = _tracker.get()
-    if tracker is None:
-        raise RuntimeError("Tracker is not initialized. Call init() first.")
-    for backend, t in tracker.backend.items():
-        try:
-            t.finish()
-        except Exception as e:
-            logger.warning(f"Failed to finish tracker for {backend}: {e}")
-    _tracker.set(None)
+def info() -> dict:
+    return require_run().info()
 
 
-def info():
-    tracker = _tracker.get()
-    if tracker is None:
-        raise RuntimeError("Tracker is not initialized. Call init() first.")
-    info = {}
-    for backend, t in tracker.backend.items():
-        if backend == "wandb":
-            info["wandb"] = {"url": t.run.url}
-        if backend == "jsonl":
-            info["jsonl"] = {"log_dir": t.log_dir.as_posix()}
-    return info
+def get_run() -> Run | None:
+    """The active run, or ``None``. Mirrors ``wandb.run``."""
+    return current_run()
+
+
+def define_metric(name: str, **kwargs):
+    """Forwarded to backends that support it; a no-op for local history."""
+    require_run().define_metric(name, **kwargs)
+
+
+def log_artifact(
+    artifact_or_path: Artifact | str,
+    name: str | None = None,
+    type: str | None = None,
+    aliases: list[str] | None = None,
+    metadata: dict | None = None,
+    mode: str = "copy",
+) -> Artifact:
+    """Store a versioned file bundle, mirroring ``wandb.log_artifact``.
+
+    ``mode`` controls local storage: ``"copy"`` (default) is safe when the source is
+    later overwritten in place, ``"link"`` hard-links for zero extra disk but then
+    shares the caller's inode, ``"reference"`` records paths without materialising.
+    """
+    return require_run().log_artifact(
+        artifact_or_path,
+        name=name,
+        type=type,
+        aliases=aliases,
+        metadata=metadata,
+        mode=mode,
+    )
+
+
+def use_artifact(artifact_or_name: Artifact | str, type: str | None = None) -> Artifact:
+    """Resolve ``name``, ``name:latest``, ``name:v3`` or ``name:<alias>``."""
+    return require_run().use_artifact(artifact_or_name, type=type)
+
+
+def summary():
+    """The run summary mapping (last value per metric, plus explicit entries)."""
+    return require_run().summary
