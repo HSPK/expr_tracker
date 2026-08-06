@@ -1,9 +1,35 @@
 [project]
 name = "expr_tracker"
-description = "Add your description here"
+description = "Local-first experiment tracking with queryable history and expression-based alerts on your training metrics"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "HSPK", email = "whxway@whu.edu.cn" }]
 requires-python = ">=3.10"
+keywords = [
+    "machine-learning",
+    "experiment-tracking",
+    "mlops",
+    "monitoring",
+    "alerting",
+    "training",
+    "deep-learning",
+    "wandb",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
 dependencies = [
     "click>=8.1.0",
     "loguru>=0.7.3",
@@ -26,6 +52,13 @@ all = [
     "pandas>=1.5",
     "polars>=0.20",
 ]
+
+[project.urls]
+Homepage = "https://hspk.github.io/expr_tracker/"
+Documentation = "https://hspk.github.io/expr_tracker/"
+Repository = "https://github.com/HSPK/expr_tracker"
+Issues = "https://github.com/HSPK/expr_tracker/issues"
+Changelog = "https://github.com/HSPK/expr_tracker/releases"
 
 [project.scripts]
 et = "expr_tracker.cli:main"

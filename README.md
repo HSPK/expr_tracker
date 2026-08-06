@@ -1,5 +1,10 @@
 # Experiment Tracker
 
+[![PyPI](https://img.shields.io/pypi/v/expr-tracker)](https://pypi.org/project/expr-tracker/)
+[![Python](https://img.shields.io/pypi/pyversions/expr-tracker)](https://pypi.org/project/expr-tracker/)
+[![License](https://img.shields.io/pypi/l/expr-tracker)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-github.io-blue)](https://hspk.github.io/expr_tracker/)
+
 A local-first experiment tracker. Metrics land in a JSONL file you own, stay
 queryable while the run is live, and can trigger alerts from an expression language.
 `wandb` and `trackio` are optional mirrors, not requirements.
@@ -114,3 +119,7 @@ Published to GitHub Pages by `.github/workflows/docs.yaml` on every push to `mai
 Internals: [`docs/design.md`](docs/design.md) (data model and key invariants) and
 [`docs/architecture.md`](docs/architecture.md) (module map, read/write paths,
 concurrency model).
+
+## License
+
+[MIT](LICENSE)

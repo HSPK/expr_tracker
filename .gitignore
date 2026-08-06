@@ -14,3 +14,8 @@ test.ipynb
 .coverage
 htmlcov/
 site/
+
+# Tracker run output: the default dir, and whatever people point --dir at
+tracker/
+outputs/
+runs/
