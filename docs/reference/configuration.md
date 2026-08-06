@@ -79,6 +79,7 @@ alert:
 | `levels` | an exact allowlist, overriding `min_level` |
 | `tags` | deliver only if the message tags intersect |
 | `options` | backend-specific settings |
+| `options.html` | email only: send an HTML part alongside the text (default `true`) |
 | `policy` | overrides the default delivery policy |
 
 ### Delivery policy

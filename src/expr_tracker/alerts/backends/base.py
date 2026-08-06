@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import urllib.error
 import urllib.parse
@@ -85,7 +86,7 @@ def post_json(
 
 def render_text(message: AlertMessage, include_fields: bool = True) -> str:
     """Render a message as plain text for channels without rich cards."""
-    parts = [message.text]
+    parts = [message.subtitle, message.text] if message.subtitle else [message.text]
     if include_fields and message.fields:
         parts.append("")
         parts.extend(f"{key}: {value}" for key, value in message.fields.items())
@@ -95,6 +96,74 @@ def render_text(message: AlertMessage, include_fields: bool = True) -> str:
         parts.append("")
         parts.append(message.traceback)
     return "\n".join(parts)
+
+
+LEVEL_COLORS = {
+    "debug": "#616161",
+    "info": "#0288d1",
+    "warning": "#ed6c02",
+    "error": "#d32f2f",
+    "critical": "#b71c1c",
+}
+
+
+def render_html(message: AlertMessage) -> str:
+    """Render a message as self-contained HTML for email.
+
+    Everything is inline-styled and table-based: mail clients strip stylesheets,
+    and several of them ignore ``div`` layout entirely.
+    """
+    color = LEVEL_COLORS.get(message.level.value, "#616161")
+    esc = html.escape
+    rows = "".join(
+        f'<tr><td style="padding:4px 12px 4px 0;color:#666;'
+        f'white-space:nowrap;vertical-align:top">{esc(str(key))}</td>'
+        f'<td style="padding:4px 0;color:#111">{esc(str(value))}</td></tr>'
+        for key, value in message.fields.items()
+    )
+    blocks = [
+        f'<tr><td style="background:{color};padding:14px 20px;color:#fff">'
+        f'<div style="font-size:17px;font-weight:600">{esc(message.title)}</div>'
+        f'<div style="font-size:12px;opacity:.85;text-transform:uppercase;'
+        f'letter-spacing:.05em">{esc(message.level.value)}'
+        + (f" &middot; {esc(message.subtitle)}" if message.subtitle else "")
+        + "</div></td></tr>"
+    ]
+    if message.text:
+        blocks.append(
+            '<tr><td style="padding:18px 20px 0;font-size:14px;line-height:1.5;'
+            f'color:#111">{esc(message.text)}</td></tr>'
+        )
+    if rows:
+        blocks.append(
+            '<tr><td style="padding:16px 20px 0"><table cellpadding="0" '
+            f'cellspacing="0" style="font-size:13px">{rows}</table></td></tr>'
+        )
+    if message.traceback:
+        blocks.append(
+            '<tr><td style="padding:16px 20px 0"><pre style="margin:0;padding:12px;'
+            "background:#f6f6f6;border-radius:4px;font-size:12px;overflow:auto;"
+            f'white-space:pre-wrap">{esc(message.traceback)}</pre></td></tr>'
+        )
+    if message.link:
+        link = esc(message.link)
+        blocks.append(
+            f'<tr><td style="padding:18px 20px 0"><a href="{link}" '
+            f'style="display:inline-block;padding:8px 16px;background:{color};'
+            'color:#fff;text-decoration:none;border-radius:4px;font-size:13px">'
+            "Open run</a></td></tr>"
+        )
+    blocks.append('<tr><td style="padding:20px"></td></tr>')
+    return (
+        '<html><body style="margin:0;background:#f4f4f4;'
+        'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">'
+        '<table cellpadding="0" cellspacing="0" width="100%" '
+        'style="background:#f4f4f4;padding:24px 0"><tr><td align="center">'
+        '<table cellpadding="0" cellspacing="0" width="520" '
+        'style="background:#fff;border-radius:6px;overflow:hidden;max-width:520px">'
+        + "".join(blocks)
+        + "</table></td></tr></table></body></html>"
+    )
 
 
 def _parse_retry_after(value) -> float | None:

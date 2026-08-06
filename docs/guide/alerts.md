@@ -93,6 +93,10 @@ Built-in types: `lark`, `slack`, `dingtalk`, `wecom`, `webhook` (a generic JSON
 template), `email`, `callable`. All but `lark` use only the standard library. Add
 your own with `register_backend()`.
 
+Email is sent as `multipart/alternative`: a styled HTML card coloured by severity,
+with the plain text as a fallback for clients that will not render it. Set
+`options.html = false` to send text only.
+
 ### Routing
 
 Each channel filters independently:

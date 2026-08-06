@@ -13,6 +13,7 @@ from .base import (
     create_backend,
     post_json,
     register_backend,
+    render_html,
     render_text,
 )
 
@@ -189,7 +190,10 @@ class EmailBackend(AlertBackend):
         mail["Subject"] = f"[{message.level.value}] {message.title}"
         mail["From"] = options.get("sender") or options.get("user") or "expr-tracker"
         mail["To"] = ", ".join(recipients)
-        mail.set_content(render_text(message))
+        # multipart/alternative: rich clients show the card, the rest see the text
+        mail.set_content(f"{message.title}\n\n{render_text(message)}")
+        if options.get("html", True):
+            mail.add_alternative(render_html(message), subtype="html")
         policy_timeout = self.config.policy.timeout if self.config.policy else 10.0
         try:
             factory = smtplib.SMTP_SSL if options.get("ssl") else smtplib.SMTP
