@@ -76,8 +76,11 @@ EXPRESSIONS = [
     "step() > 100",
     # names
     "train.loss > 1",
-    "`odd name` > 1",
-    "`a-b` + `c d` > 1",
+    '"odd name" > 1',
+    "'a-b' + 'c d' > 1",
+    "train/loss > 1",
+    "val/m1/acc@16 > 2",
+    "mean(train/loss[20]) > 1",
     # literals
     "a > 1e-8",
     "a > .5",
@@ -222,7 +225,8 @@ BUILT = {
     "mean(a[5]) > 1": lambda: M.a[5].mean() > 1,
     "mean(a[30s]) > 1": lambda: M.a["30s"].mean() > 1,
     "train.loss > 1": lambda: M.train.loss > 1,
-    "`odd name` > 1": lambda: M["odd name"] > 1,
+    '"odd name" > 1': lambda: M["odd name"] > 1,
+    "train/loss > 1": lambda: M["train/loss"] > 1,
     "diff(a[2]) > 1": lambda: M.a[2].diff() > 1,
     "zscore(a[20]) > 3": lambda: M.a[20].zscore() > 3,
 }

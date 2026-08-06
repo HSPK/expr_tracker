@@ -113,7 +113,7 @@ class MetricRef(Node):
     name: str
 
     def to_source(self) -> str:
-        return self.name if _is_plain(self.name) else f"`{self.name}`"
+        return self.name if _is_plain(self.name) else _quote(self.name)
 
     def metrics(self) -> set[str]:
         return {self.name}
@@ -342,9 +342,27 @@ def _wrap(node: Node, parent_op: str | None = None) -> str:
 
 
 def _is_plain(name: str) -> bool:
+    """Whether the name can be written bare and lex back to exactly itself."""
+    from .lexer import is_name_char
+
     if not name or not (name[0].isalpha() or name[0] == "_"):
         return False
-    return all(ch.isalnum() or ch in "_." for ch in name)
+    for index, ch in enumerate(name):
+        if is_name_char(ch):
+            continue
+        # A `/` only joins the name when a name character follows it
+        if ch == "/" and index + 1 < len(name) and is_name_char(name[index + 1]):
+            continue
+        return False
+    return True
+
+
+def _quote(name: str) -> str:
+    """Wrap a name in whichever quote it does not already contain."""
+    for quote in ('"', "'", "`"):
+        if quote not in name:
+            return f"{quote}{name}{quote}"
+    return f'"{name}"'  # pragma: no cover - a name with all three quote styles
 
 
 def _format_duration(seconds: float | None) -> str:

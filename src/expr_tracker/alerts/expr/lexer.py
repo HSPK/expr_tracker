@@ -11,6 +11,7 @@ OP = "OP"
 EOF = "EOF"
 
 KEYWORDS = {"and", "or", "not", "true", "false"}
+QUOTES = "\"'`"
 TWO_CHAR_OPS = {">=", "<=", "==", "!=", "&&", "||"}
 ONE_CHAR_OPS = set("><+-*/%()[],|&!~")
 DURATION_UNITS = (
@@ -51,10 +52,10 @@ def tokenize(source: str) -> list[Token]:
             i += 1
             continue
         start = i
-        if ch == "`":
-            end = source.find("`", i + 1)
+        if ch in QUOTES:
+            end = source.find(ch, i + 1)
             if end < 0:
-                raise ExprSyntaxError("Unterminated `identifier`", source, i)
+                raise ExprSyntaxError(f"Unterminated {ch}quoted name{ch}", source, i)
             tokens.append(Token(NAME, source[i + 1 : end], start))
             i = end + 1
             continue
@@ -69,8 +70,7 @@ def tokenize(source: str) -> list[Token]:
                 tokens.append(Token(NUMBER, float(text), start))
             continue
         if ch.isalpha() or ch == "_":
-            while i < n and (source[i].isalnum() or source[i] in "_."):
-                i += 1
+            i = scan_name(source, i)
             word = source[start:i]
             tokens.append(
                 Token(
@@ -108,6 +108,25 @@ def parse_duration(text: str) -> float:
         raise ValueError(
             f"Invalid duration {text!r}; expected e.g. '30s', '5m', '2h'."
         ) from e
+
+
+def is_name_char(ch: str) -> bool:
+    return ch.isalnum() or ch in "_.@"
+
+
+def scan_name(source: str, i: int) -> int:
+    """Consume a metric name, which may contain ``/`` as in ``val/m1/acc@16``.
+
+    A ``/`` only joins the name when a name character follows it immediately, so
+    division has to be spaced: ``a / b`` divides, ``a/b`` is one metric.
+    """
+    n = len(source)
+    while i < n and (
+        is_name_char(source[i])
+        or (source[i] == "/" and i + 1 < n and is_name_char(source[i + 1]))
+    ):
+        i += 1
+    return i
 
 
 def _scan_number(source: str, i: int) -> int:

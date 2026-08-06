@@ -49,10 +49,17 @@ def test_window_selector():
     assert parse("mean(loss[5m])").args[0].duration == 300.0
 
 
-def test_backtick_metric_names():
-    node = parse("`train/loss` > 1")
+@pytest.mark.parametrize("quote", ["`", '"', "'"])
+def test_quoted_metric_names(quote):
+    node = parse(f"{quote}train loss{quote} > 1")
+    assert isinstance(node.left, MetricRef) and node.left.name == "train loss"
+    assert node.to_source() == '"train loss" > 1'  # rendered with the plain quote
+
+
+def test_a_slashed_name_needs_no_quoting():
+    node = parse("train/loss > 1")
     assert isinstance(node.left, MetricRef) and node.left.name == "train/loss"
-    assert node.to_source() == "`train/loss` > 1"
+    assert node.to_source() == "train/loss > 1"
 
 
 def test_dotted_metric_names_are_plain():
@@ -100,9 +107,11 @@ def test_no_python_injection_surface():
     """The grammar is a closed whitelist: no string literals, attributes or free calls."""
     from expr_tracker.alerts.expr import ExprError, validate
 
-    for source in ["__import__('os')", "open('x')", 'eval("1")']:
-        with pytest.raises(ExprSyntaxError):
-            parse(source)
+    # Quoted tokens are metric names, never strings, and the function table is a
+    # closed whitelist, so nothing here survives validation.
+    for source in ["__import__('os')", "open('x')", 'eval("1")', "os.system('ls')"]:
+        with pytest.raises((ExprSyntaxError, ExprError)):
+            validate(parse(source))
     with pytest.raises(ExprError):
         validate(parse("open(1)"))
     # A dot is just part of a metric name, never attribute access
@@ -162,7 +171,7 @@ def test_parse_rule_from_builder():
 
 def test_builder_round_trip():
     node = M["train/loss"][50].zscore() > 4
-    assert node.to_source() == "zscore(`train/loss`[50]) > 4"
+    assert node.to_source() == "zscore(train/loss[50]) > 4"
     assert parse(node.to_source()).to_source() == node.to_source()
 
 

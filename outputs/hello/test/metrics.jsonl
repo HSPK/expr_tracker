@@ -1,0 +1,5 @@
+{"_step": 0, "_time": 1785984521.3747878, "val/loss": 10, "train/loss": 20}
+{"_step": 1, "_time": 1785984578.8073661, "val/loss": 10, "train/loss": 25}
+{"_step": 2, "_time": 1785984751.5897822, "val/loss": 10, "train/loss": 25}
+{"_step": 3, "_time": 1785984760.5739543, "val/loss": 10, "train/loss": 25}
+{"_step": 4, "_time": 1785984823.973783, "train": 30, "loss": 1}

@@ -31,7 +31,8 @@ def context(**series):
 
 def test_metric_reference_forms():
     assert M.loss.to_source() == "loss"
-    assert M["train/loss"].to_source() == "`train/loss`"
+    assert M["train/loss"].to_source() == "train/loss"
+    assert M["odd name"].to_source() == '"odd name"'
     assert M.train.loss.to_source() == "train.loss"  # dotted path becomes one name
 
 

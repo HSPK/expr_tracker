@@ -30,9 +30,44 @@ Precedence is `or < and < not < comparison < +- < */%`.
 
 ## Metric names
 
-- Bare names: `loss`, `grad_norm`.
-- `.` resolves to `/`: `eval.acc` finds the metric `eval/acc`.
-- Backticks for anything else: `` `a-b c` ``, `` `中文指标` ``.
+Bare names may contain letters, digits, `_`, `.`, `@` and `/`, so the names ML code
+actually uses need no ceremony:
+
+```
+train/loss > 1
+val/m1/acc@16 < 0.5
+mean(train/loss[20]) > 1
+```
+
+`.` also resolves to `/`, so `eval.acc` finds `eval/acc` if no metric is literally
+called `eval.acc`.
+
+### `/` is part of a name unless it is spaced
+
+A `/` joins the name when a name character follows it immediately. Division must
+therefore be written with spaces:
+
+| Written | Means |
+| --- | --- |
+| `a/b` | the metric `a/b` |
+| `a / b` | `a` divided by `b` |
+| `a /b`, `a/ b` | `a` divided by `b` (any space makes it division) |
+| `loss/2` | the metric `loss/2` |
+| `loss / 2` | `loss` divided by 2 |
+| `1/2` | division — a name cannot start with a digit |
+
+### Quote anything else
+
+A name with spaces or other characters must be quoted, with `"`, `'` or `` ` ``:
+
+```
+"train loss" > 1
+'val acc@16' < 0.5
+`a-b` > 1
+```
+
+Quotes only ever produce a metric name; the language has no string literals.
+`to_source()` renders with `"` (or another quote if the name contains one).
 
 ## Windows
 

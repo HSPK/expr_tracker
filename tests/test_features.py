@@ -415,3 +415,122 @@ def test_a_missing_config_file_is_an_error(tmp_path):
 def test_an_unsupported_config_source_is_rejected():
     with pytest.raises(TypeError, match="Unsupported alert config"):
         load_config(12345)
+
+
+# ====================================================================== names
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "train/loss",
+        "val/m1/acc@16",
+        "a/b/c/d",
+        "acc@16",
+        "loss@ep1/step",
+        "train/loss.avg",
+        "_private/metric",
+        "a1/b2",
+    ],
+)
+def test_slashed_and_at_names_need_no_quoting(name):
+    node = parse(f"{name} > 1")
+    assert node.metrics() == {name}
+    assert node.to_source() == f"{name} > 1"
+
+
+@pytest.mark.parametrize("source", ["a / b", "a /b", "a/ b", "a  /  b"])
+def test_a_spaced_slash_is_division(source):
+    node = parse(f"{source} > 1")
+    assert node.metrics() == {"a", "b"}
+    assert node.to_source() == "(a / b) > 1"
+
+
+def test_an_unspaced_slash_is_one_metric():
+    node = parse("a/b > 1")
+    assert node.metrics() == {"a/b"}
+
+
+def test_dividing_by_a_number_needs_spaces():
+    """`loss/2` is a metric name; the division has to be written `loss / 2`."""
+    assert parse("loss/2 > 1").metrics() == {"loss/2"}
+    assert parse("loss / 2 > 1").metrics() == {"loss"}
+
+
+def test_numbers_still_divide_without_spaces():
+    """A name cannot start with a digit, so `1/2` is unambiguous."""
+    from expr_tracker.alerts.expr import EvalContext, evaluate
+    from expr_tracker.history import MetricSeries
+
+    assert evaluate(parse("1/2"), EvalContext(MetricSeries())) == 0.5
+
+
+@pytest.mark.parametrize("quote", ['"', "'", "`"])
+def test_every_quote_style_names_a_metric(quote):
+    node = parse(f"{quote}train loss{quote} > 1")
+    assert node.metrics() == {"train loss"}
+
+
+@pytest.mark.parametrize(
+    "name", ["train loss", "a-b", "a b/c", "100loss", "with  spaces", "中文 指标"]
+)
+def test_quoting_carries_names_the_bare_grammar_cannot(name):
+    node = parse(f'"{name}" > 1')
+    assert node.metrics() == {name}
+    assert parse(node.to_source()).metrics() == {name}
+
+
+def test_a_name_containing_a_quote_uses_another_one():
+    assert parse('"a\'b" > 1').to_source() == '"a\'b" > 1'
+    assert parse('`a"b` > 1').to_source() == "'a\"b' > 1"
+
+
+@pytest.mark.parametrize("source", ['"unterminated', "'unterminated", "`unterminated"])
+def test_an_unterminated_quote_is_reported(source):
+    with pytest.raises(ExprSyntaxError, match="Unterminated"):
+        tokenize(f"{source} > 1")
+
+
+@pytest.mark.parametrize("name", ["a/", "a//b", "/a"])
+def test_names_the_lexer_cannot_read_back_are_quoted(name):
+    """to_source must stay re-parseable, so these keep their quotes."""
+    from expr_tracker.alerts.expr.nodes import MetricRef
+
+    rendered = MetricRef(name).to_source()
+    assert rendered != name
+    assert parse(rendered).metrics() == {name}
+
+
+def test_a_slashed_name_works_in_a_window_and_a_call():
+    node = parse("mean(val/m1/acc@16[20]) > 0.5")
+    assert node.metrics() == {"val/m1/acc@16"}
+    assert node.to_source() == "mean(val/m1/acc@16[20]) > 0.5"
+
+
+def test_a_slashed_name_fires_a_real_rule(tmp_path):
+    import expr_tracker as et
+
+    received: list = []
+    run = et.init(
+        project="names",
+        name="r",
+        dir=str(tmp_path),
+        backends=[],
+        max_open_seconds=None,
+        alert={
+            "channels": [
+                {
+                    "type": "callable",
+                    "name": "c",
+                    "options": {"handler": received.append},
+                    "policy": {"async_send": False, "dedup_window": 0},
+                }
+            ]
+        },
+        alert_rules=["val/m1/acc@16 < 0.5 => warning: low accuracy"],
+    )
+    try:
+        run.log({"val/m1/acc@16": 0.1})
+        assert [m.text for m in received] == ["low accuracy"]
+    finally:
+        et.finish()

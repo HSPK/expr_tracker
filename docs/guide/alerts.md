@@ -29,8 +29,9 @@ Key points, covered fully in [Alert expressions](../reference/expressions.md):
   `loss[5m]` the last 5 minutes.
 - Precedence is `or < and < not < comparison < arithmetic` — **not** Python's. So
   `diff(m1) > 50 | m1 > 5` parses the way it reads, as `(diff(m1) > 50) or (m1 > 5)`.
-- `.` in a metric name resolves to `/`, so `eval.acc` finds `eval/acc`. Use backticks
-  for anything exotic: `` `a-b c` ``.
+- Metric names may contain `/` and `@` directly (`train/loss`, `val/m1/acc@16`), so
+  division has to be spaced: `a/b` is one metric, `a / b` divides. Quote anything
+  else with `"`, `'` or backticks: `"train loss"`.
 - Missing data, too few points, NaN and division by zero all evaluate to UNKNOWN,
   which never fires and never changes state. Warm-up cannot produce false alarms.
 

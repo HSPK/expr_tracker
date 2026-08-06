@@ -199,15 +199,23 @@ unary   := ("-"|"+") unary | postfix
 postfix := primary ("[" window "]")?
 primary := NUMBER | DURATION | ident | ident "(" args ")" | "(" expr ")"
 window  := INT (points) | DURATION (30s / 5m / 2h)
-ident   := [A-Za-z_][A-Za-z0-9_.]* | `anything`
+ident   := [A-Za-z_][A-Za-z0-9_.@]* ("/" [A-Za-z0-9_.@]+)*   # train/loss, val/m1/acc@16
+         | "quoted" | 'quoted' | `quoted`                    # anything else
 ```
+
+A `/` joins an identifier only when a name character follows it immediately, so
+division has to be spaced: `a/b` is one metric, `a / b` divides. That makes the
+common case (`train/loss`) free of ceremony at the cost of `loss/2` naming a metric
+rather than halving `loss`. Quoted forms produce names, never string literals — the
+grammar has no strings, and the function table is a closed whitelist.
 
 A hand-written lexer and Pratt parser, **not Python's `ast`**: Python reads
 `diff(m1)>50 | m1>5` as `diff(m1) > (50|m1) > 5`. Precedence, low to high:
 `or < and < not < comparison < +- < */% < unary < call/window`.
 
 **Metric resolution**: exact name → `.` replaced by `/` → error with close-match
-suggestions. So `eval.acc` finds `eval/acc`; use backticks for exotic names.
+suggestions. So `eval.acc` finds `eval/acc`; quote anything the bare grammar cannot
+express.
 
 ### C.2 Three-valued logic (Kleene)
 
