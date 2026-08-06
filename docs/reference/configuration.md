@@ -105,7 +105,7 @@ alert:
 | `condition` | — | the expression (alias: `expr`) |
 | `name` | derived | identifies the rule (alias: `alert`) |
 | `level` | `warning` | `debug`, `info`, `warning`, `error`, `critical` |
-| `title` / `message` | derived | supports templates |
+| `title` / `message` | derived | supports templates; the title defaults to `name` when you set one, else to the condition |
 | `mode` | `"edge"` | `edge` fires on transition, `level` keeps firing |
 | `for_steps` | 1 | must hold this many consecutive steps (alias: `for`) |
 | `cooldown` | 300.0 | seconds between repeats in level mode |

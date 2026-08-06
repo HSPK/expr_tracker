@@ -451,3 +451,34 @@ def test_a_metric_that_appears_late_is_not_a_typo(run):
     assert not next(iter(instance.info()["alerts"]["rules"].values()))[
         "unresolved_metrics"
     ]
+
+
+# ------------------------------------------------------------------ headlines
+
+
+def test_an_unnamed_rule_is_headlined_by_its_condition(run):
+    """A generated name is a hash, which reads badly as an email subject."""
+    instance, received = run(["isnan(loss) => critical: diverged"])
+    instance.log({"loss": float("nan")})
+    assert received[0].title == "isnan(loss)"
+
+
+def test_a_named_rule_is_headlined_by_its_name(run):
+    instance, received = run([{"condition": "loss > 1", "name": "loss_high"}])
+    instance.log({"loss": 5.0})
+    assert received[0].title == "loss_high"
+
+
+def test_an_explicit_title_wins_and_is_templated(run):
+    instance, received = run([{"condition": "loss > 1", "title": "Spike @ {step}"}])
+    instance.log({"loss": 5.0}, step=7, commit=True)
+    assert received[0].title == "Spike @ 7"
+
+
+def test_the_auto_named_flag_is_not_serialised():
+    import dataclasses
+
+    rule = AlertRule(condition="loss > 1")
+    assert rule.auto_named is True
+    assert "auto_named" not in dataclasses.asdict(rule)
+    assert AlertRule(condition="loss > 1", name="mine").auto_named is False

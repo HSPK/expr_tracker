@@ -209,7 +209,12 @@ class AlertEngine:
         except Exception as e:  # pragma: no cover - format_map already tolerates gaps
             logger.warning(f"Failed to render message for rule {rule.name!r}: {e}")
             rendered = rule.condition
-        title = _format(rule.title, values) if rule.title else rule.name
+        if rule.title:
+            title = _format(rule.title, values)
+        else:
+            # An auto-generated name is a hash; the condition says far more,
+            # especially as an email subject line
+            title = rule.condition if getattr(rule, "auto_named", False) else rule.name
         level = AlertLevel.INFO if recovered else rule.level
         message = AlertMessage(
             title=f"[recovered] {title}" if recovered else title,

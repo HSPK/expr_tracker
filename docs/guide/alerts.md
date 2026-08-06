@@ -93,9 +93,68 @@ Built-in types: `lark`, `slack`, `dingtalk`, `wecom`, `webhook` (a generic JSON
 template), `email`, `callable`. All but `lark` use only the standard library. Add
 your own with `register_backend()`.
 
-Email is sent as `multipart/alternative`: a styled HTML card coloured by severity,
-with the plain text as a fallback for clients that will not render it. Set
-`options.html = false` to send text only.
+### Email
+
+Email needs an SMTP server to send *from*, even when the recipient is Gmail.
+
+```python
+et.init(
+    project="demo",
+    alert={
+        "channels": [
+            {
+                "type": "email",
+                "name": "inbox",
+                "options": {
+                    "host": "smtp.gmail.com",
+                    "port": 587,
+                    "tls": True,
+                    "user": "you@gmail.com",
+                    "password": os.environ["SMTP_PASSWORD"],
+                    "sender": "you@gmail.com",
+                    "to": ["you@gmail.com", "teammate@example.com"],
+                },
+                "min_level": "error",
+            }
+        ]
+    },
+    alert_rules=["isnan(loss) => critical: loss diverged"],
+)
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `host` | — | SMTP server, **required** |
+| `to` | — | one address or a list, **required** |
+| `port` | 465 with `ssl`, else 25 | |
+| `tls` | `false` | STARTTLS on a plain connection (port 587) |
+| `ssl` | `false` | implicit TLS from the start (port 465) |
+| `user` / `password` | — | omit both for an unauthenticated relay |
+| `sender` | `user`, else `expr-tracker` | the `From` address |
+| `html` | `true` | send the HTML part as well as the text |
+
+Use `tls` **or** `ssl`, not both: `tls` upgrades a plain connection, `ssl` starts
+encrypted.
+
+!!! warning "Keep the password out of your code"
+    Read it from the environment, as above. Gmail additionally rejects account
+    passwords for SMTP — turn on 2-step verification and create an
+    [app password](https://myaccount.google.com/apppasswords), which you can
+    revoke independently of your account.
+
+Mail is sent as `multipart/alternative`: a severity-coloured HTML card with the
+fields as a table, plus the plain text as a fallback for clients that will not
+render HTML. Set `html: false` for text only.
+
+Common servers:
+
+| Provider | host | port | setting |
+| --- | --- | --- | --- |
+| Gmail | `smtp.gmail.com` | 587 | `tls: true` (app password required) |
+| Outlook / Office 365 | `smtp.office365.com` | 587 | `tls: true` |
+| QQ / 163 | `smtp.qq.com`, `smtp.163.com` | 465 | `ssl: true` (authorisation code) |
+| SendGrid | `smtp.sendgrid.net` | 587 | `tls: true`, user `apikey` |
+| Internal relay | your host | 25 | often no `user`/`password` |
 
 ### Routing
 

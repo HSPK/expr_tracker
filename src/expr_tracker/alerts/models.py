@@ -230,6 +230,9 @@ class AlertRule:
                 f"Unknown alert rule mode {self.mode!r}; use 'edge' or 'level'."
             )
         self.for_steps = max(1, int(self.for_steps))
+        # A generated name identifies the rule but reads badly as a headline, so
+        # remember whether the user chose it. Not a field: it stays out of to_dict().
+        self.auto_named = not self.name
         if not self.name:
             self.name = f"rule_{self._auto_digest()}"
         if not self.message:
