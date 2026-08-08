@@ -538,3 +538,83 @@ def test_reinitialising_closes_the_span_writer(tmp_path):
         assert (Path(tmp_path) / "sp" / "a" / "spans.jsonl").exists()
     finally:
         store.finish()
+
+
+# ------------------------------------------------------------------ span object
+
+
+def test_a_started_span_works_as_a_context_manager(run):
+    """`with et.start_span(...)` closes it on exit, like any other guard."""
+    instance = run()
+    with et.start_span("manual") as span:
+        time.sleep(0.003)
+    assert span.duration_ms >= 2.0
+    assert metrics_of(instance)[f"manual/{DURATION_SUFFIX}"] >= 2.0
+
+
+def test_a_started_span_records_an_exception(run, tmp_path):
+    run()
+    with pytest.raises(ValueError), et.start_span("manual"):
+        raise ValueError("boom")
+    et.log({"loss": 1.0})
+    et.finish()
+    assert spans_of(tmp_path)[0]["error"] == "ValueError"
+
+
+def test_a_started_span_works_as_an_async_context_manager(run):
+    instance = run()
+
+    async def work():
+        async with et.start_span("amanual"):
+            await asyncio.sleep(0.003)
+
+    asyncio.run(work())
+    assert metrics_of(instance)[f"amanual/{DURATION_SUFFIX}"] >= 2.0
+
+
+def test_a_started_span_records_an_async_exception(run, tmp_path):
+    run()
+
+    async def work():
+        async with et.start_span("afail"):
+            raise ValueError("boom")
+
+    with pytest.raises(ValueError):
+        asyncio.run(work())
+    et.log({"loss": 1.0})
+    et.finish()
+    assert spans_of(tmp_path)[0]["error"] == "ValueError"
+
+
+def test_the_async_decorator_records_an_exception(run, tmp_path):
+    run()
+
+    @et.span("adecor")
+    async def failing():
+        raise RuntimeError("nope")
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(failing())
+    et.log({"loss": 1.0})
+    et.finish()
+    record = spans_of(tmp_path)[0]
+    assert record["name"] == "adecor" and record["error"] == "RuntimeError"
+
+
+def test_the_repr_shows_the_state(run):
+    run()
+    span = et.start_span("shown")
+    assert "shown" in repr(span) and "open" in repr(span)
+    span.end()
+    assert "ms" in repr(span)
+
+
+def test_the_track_is_recorded(run, tmp_path):
+    run()
+    with et.span("outer"), et.span("inner"):
+        pass
+    et.log({"loss": 1.0})
+    et.finish()
+    records = spans_of(tmp_path)
+    assert len({r["track"] for r in records}) == 1  # a tree shares one track
+    assert records[0]["track"] == threading.get_ident()

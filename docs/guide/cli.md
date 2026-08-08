@@ -22,6 +22,25 @@ et history tracker/jsonl/demo/run-1 -n -1 --format csv > run.csv
 
 The argument is a run directory or a `metrics.jsonl` file.
 
+## `et trace`
+
+Export recorded [spans](spans.md) as a Chrome Trace, for
+[Perfetto](https://ui.perfetto.dev) or `chrome://tracing`.
+
+```bash
+et trace runs/llm/sft-1                              # every stream -> trace.json
+et trace runs/llm/sft-1 -o pipeline.json
+et trace runs/llm/sft-1 --stream data                # one stream
+et trace runs/llm/sft-1 --stream default,data        # several
+et trace runs/llm/sft-1 --step-range 100:200         # a slice of the run
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `-o`, `--output` | `trace.json` | where to write |
+| `--stream` | every stream | comma separated; `default` is the unnamed one |
+| `--step-range` | all | `start:end`, end exclusive |
+
 ## `et rules explain`
 
 Show how an expression parses, and what it references. Useful when precedence is in

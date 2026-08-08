@@ -11,6 +11,7 @@ Durations never commit a step of their own; they ride along with whatever
 from __future__ import annotations
 
 import functools
+import threading
 import time
 from contextvars import ContextVar
 from typing import Any
@@ -50,6 +51,7 @@ class Span:
         "path",
         "start",
         "started_at",
+        "track",
     )
 
     def __init__(self, name: str, store, **attributes: Any):
@@ -57,6 +59,7 @@ class Span:
         self.attributes = dict(attributes)
         self._store = store
         self.path = self.name
+        self.track = 0
         self.start = 0.0
         self.started_at = 0.0
         self.duration_ms = 0.0
@@ -69,6 +72,8 @@ class Span:
     def begin(self) -> Span:
         parent = current_span()
         self.path = f"{parent.path}/{self.name}" if parent else self.name
+        # Children share their parent's track, so a tree never straddles lanes
+        self.track = parent.track if parent else threading.get_ident()
         self.started_at = time.time()
         self.start = time.perf_counter()
         self._token = _STACK.set((*_STACK.get(), self))
@@ -127,6 +132,7 @@ class Span:
         record = {
             "name": self.path,
             "depth": self.path.count("/"),
+            "track": self.track,
             "start": self.started_at,
             "dur_ms": self.duration_ms,
         }

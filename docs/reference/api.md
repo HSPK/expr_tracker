@@ -165,6 +165,15 @@ span.duration_ms
 A closed span adds `<path>/duration_ms` and `<path>/count` to the open row and
 appends the full record to `spans.jsonl`. See [Spans](../guide/spans.md).
 
+### Trace export
+
+```python
+from expr_tracker.trace import build_trace, write_trace
+
+write_trace(run, "trace.json", stream="*", step_range=None)   # returns the span count
+build_trace(run, stream="*")                                  # the dict, unwritten
+```
+
 ## Artifacts
 
 ```python

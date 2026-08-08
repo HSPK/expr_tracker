@@ -13,6 +13,7 @@ from .alerts.engine import AlertEngine
 from .alerts.expr import EvalContext, compile_condition, parse_rule, validate
 from .alerts.models import AlertConfig, ChannelConfig, WebhookPolicy
 from .history import MetricSeries, read_history
+from .trace import write_trace
 
 
 @click.group()
@@ -52,6 +53,29 @@ def history(run: str, n: int, metrics: str | None, step_range: str | None, fmt: 
         click.echo(_to_csv(rows))
     else:
         click.echo(_to_table(rows))
+
+
+@main.command()
+@click.argument("run", type=click.Path(exists=True))
+@click.option("-o", "--output", default="trace.json", help="Where to write the trace")
+@click.option(
+    "--stream",
+    default=None,
+    help="Comma separated streams; every stream by default. Use 'default' for the "
+    "unnamed one.",
+)
+@click.option("--step-range", default=None, help="start:end (end exclusive)")
+def trace(run: str, output: str, stream: str | None, step_range: str | None):
+    """Export recorded spans as a Chrome Trace.
+
+    Open the result at https://ui.perfetto.dev or chrome://tracing. It can be
+    loaded beside a torch.profiler trace.
+    """
+    wanted: str | list[str] | None = "*"
+    if stream:
+        wanted = [None if s in ("default", "") else s for s in stream.split(",")]
+    count = write_trace(run, output, wanted, step_range=_parse_range(step_range))
+    click.echo(f"wrote {count} span(s) to {output}")
 
 
 @main.group()

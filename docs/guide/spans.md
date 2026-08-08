@@ -114,6 +114,24 @@ Turn it off if you only want the metrics:
 et.init(..., spans=False)
 ```
 
+## Viewing the timeline
+
+`et trace` turns the span file into a Chrome Trace, which
+[Perfetto](https://ui.perfetto.dev) and `chrome://tracing` open directly:
+
+```bash
+et trace runs/llm/sft-1 -o trace.json
+et trace runs/llm/sft-1 --stream data --step-range 100:200
+```
+
+Each stream becomes a process and each thread a track, so a data worker and a
+training loop sit on one timeline and the gap where one waited for the other is
+visible. Spans keep their nesting, their step and their attributes.
+
+Exporting a standard format rather than drawing our own view means the result
+can be loaded beside a `torch.profiler` trace, which is usually where the real
+question is: what were the GPUs doing while the loader stalled.
+
 ## Errors
 
 An exception is recorded and re-raised — the span never swallows it:
