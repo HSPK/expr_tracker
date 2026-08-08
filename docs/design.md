@@ -75,7 +75,25 @@ last line. Patch lines and `step_policy="allow"` both let a file end on a lower 
 and continuing from that would reuse an existing one. `max_step` is maintained
 incrementally and persisted in the sidecar.
 
-### A.4 Multiple processes
+### A.4 Streams
+
+Independent producers — a training loop and a data worker — have unrelated step
+semantics, so each gets its own file, cursor and resume state under one run
+directory: `metrics[.stream][.rankN].jsonl`, plus per-stream `summary` and
+`config` sidecars so concurrent processes cannot clobber each other.
+
+The store is instantiated once per stream rather than made multi-tenant, so every
+invariant below holds unchanged within a stream; only the filename differs.
+
+`resolve_run_path()` matches names exactly rather than taking the first glob hit:
+`metrics.data.jsonl` sorts before `metrics.jsonl`, so sort order would silently
+return a stream in place of the default producer.
+
+A stream is forwarded to a backend as its own run, grouped under the run name.
+Neither wandb nor trackio can merge two step axes into one run; wandb's shared
+mode can, but requires a live server and has no trackio equivalent.
+
+### A.5 Multiple processes
 
 The supported model is **rank 0 tracks**; there is no cross-rank merging.
 

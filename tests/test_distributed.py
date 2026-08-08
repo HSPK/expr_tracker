@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from expr_tracker.history import HistoryStore, read_history, resolve_run_path
-from expr_tracker.history.store import _metrics_filename, current_rank
+from expr_tracker.history.naming import current_rank, metrics_filename
 from expr_tracker.run import Run
 
 
@@ -65,7 +65,7 @@ def test_rank_takes_priority_over_local_rank(monkeypatch):
 def test_a_negative_rank_is_treated_as_the_main_shard(rank):
     rank(-1)
     assert current_rank() == -1
-    assert _metrics_filename(rank_aware=True) == "metrics.jsonl"
+    assert metrics_filename(None, rank_aware=True) == "metrics.jsonl"
 
 
 # ------------------------------------------------------------------ file names
@@ -82,12 +82,12 @@ def test_a_negative_rank_is_treated_as_the_main_shard(rank):
 )
 def test_each_rank_gets_its_own_file(rank, value, expected):
     rank(value)
-    assert _metrics_filename(rank_aware=True) == expected
+    assert metrics_filename(None, rank_aware=True) == expected
 
 
 def test_rank_awareness_can_be_switched_off(rank):
     rank(5)
-    assert _metrics_filename(rank_aware=False) == "metrics.jsonl"
+    assert metrics_filename(None, rank_aware=False) == "metrics.jsonl"
 
 
 def test_a_worker_rank_writes_to_its_own_shard(rank, tmp_path):

@@ -17,6 +17,7 @@ from loguru import logger
 
 from .artifacts import Artifact, ArtifactStore, coerce_artifact
 from .history import HistoryStore, current_rank, resolve_commit
+from .history.naming import sidecar_filename
 from .summary import Summary
 
 _lock = threading.RLock()
@@ -72,6 +73,7 @@ class Run:
         alert: Any = None,
         alert_rules: Sequence[Any] = (),
         alert_on_rank: int | None = 0,
+        stream: str | None = None,
         **history_kwargs,
     ):
         self.project = project
@@ -96,11 +98,15 @@ class Run:
             dir=dir,
             print_to_screen=print_to_screen,
             on_commit=self._on_commit,
+            stream=stream,
             **{**backend_kwargs.get("jsonl", {}), **history_kwargs},
         )
         self._closers.append(self.history.finish)
         self.name = self.history.name
-        self.summary = Summary(self.history.log_dir / "summary.json")
+        self.stream = self.history.stream
+        self.summary = Summary(
+            self.history.log_dir / sidecar_filename("summary", self.stream, "json")
+        )
         # History survives a crash through its own atexit hook; the summary is
         # just as much a record of the run, so persist it the same way
         atexit.register(self._save_summary_at_exit)
@@ -150,9 +156,20 @@ class Run:
             self._rollback()
             raise
 
+    @property
+    def backend_run_name(self) -> str:
+        """A stream is an independent producer, so it gets its own backend run.
+
+        Grouping ties them back together: both wandb and trackio understand
+        ``group``, and neither can merge two step axes into one run.
+        """
+        return f"{self.name}-{self.stream}" if self.stream else self.name
+
     def _init_backend(
         self, name, instance, *, entity, dir, notes, tags, resume, kwargs
     ):
+        # A grouped run keeps the streams together in the backend UI
+        grouping = {"group": self.name} if self.stream else {}
         try:
             if name == "trackio":
                 # trackio.init has no entity/notes/tags/dir/id, so those ride along
@@ -165,23 +182,27 @@ class Run:
                 }
                 instance.init(
                     project=self.project,
-                    name=self.name,
+                    name=self.backend_run_name,
                     config=config,
                     resume=_trackio_resume(resume),
-                    **kwargs,
+                    **{**grouping, **kwargs},
                 )
             else:
                 instance.init(
                     project=self.project,
-                    name=self.name,
+                    name=self.backend_run_name,
                     entity=entity,
                     dir=dir,
                     notes=notes,
                     tags=tags,
                     resume=resume,
-                    id=self.name,
+                    id=self.backend_run_name,
                     config=self.config,
-                    **kwargs,
+                    **{
+                        **grouping,
+                        **({"job_type": self.stream} if self.stream else {}),
+                        **kwargs,
+                    },
                 )
         except Exception as e:
             logger.warning(f"Failed to initialize backend {name}: {e}")

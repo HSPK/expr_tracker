@@ -23,6 +23,7 @@ et.init(
     backends: Sequence[str] = ("wandb", "jsonl"),
     backend_kwargs: dict[str, dict] | None = None,
     print_to_screen: bool = False,
+    stream: str | None = None,
     alert=None,
     alert_rules: Sequence = (),
     **history_options,
@@ -77,8 +78,12 @@ et.history(
     fill_missing: bool = False,
     dropna: bool = False,
     run: str | Path | None = None,
+    stream: str | None = ...,
 )
 ```
+
+Omit `stream` to read the running one; pass `None` for the default producer. See
+[Streams](../guide/streams.md).
 
 `n=-1` or `None` returns everything. With `run=`, reads that run offline and no
 `init()` is needed. See [Querying history](../guide/history.md).

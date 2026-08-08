@@ -14,6 +14,7 @@ from pathlib import Path
 from loguru import logger
 
 from .frame import project, to_output
+from .naming import RANK_PATTERN, metrics_filename
 
 CHUNK_SIZE = 256 * 1024
 
@@ -317,6 +318,7 @@ def read_history(
     run: str | Path,
     n: int | None = 50,
     *,
+    stream: str | None = None,
     output_type: str = "dict",
     metrics: Sequence[str] | None = None,
     step_range: tuple[int | None, int | None] | None = None,
@@ -325,7 +327,7 @@ def read_history(
     dropna: bool = False,
 ):
     """Read any run's history without ``init()``; ``run`` is a directory or file."""
-    reader = JsonlReader(resolve_run_path(run))
+    reader = JsonlReader(resolve_run_path(run, stream))
     limit = None if n is None or n < 0 else max(0, n)
     if limit == 0:
         records: list[dict] = []
@@ -347,13 +349,41 @@ def read_history(
     return to_output(rows, output_type)
 
 
-def resolve_run_path(run: str | Path) -> Path:
+def resolve_run_path(run: str | Path, stream: str | None = None) -> Path:
+    """The metrics file of a run directory, or the file itself.
+
+    Names are matched exactly rather than by sort order: ``metrics.data.jsonl``
+    sorts before ``metrics.jsonl``, so picking the first match would silently
+    return a stream instead of the default producer.
+    """
     path = Path(run)
-    if path.is_dir():
-        candidates = sorted(path.glob("metrics*.jsonl"))
-        if not candidates:
-            raise FileNotFoundError(f"No metrics*.jsonl found under {path}")
-        return candidates[0]
-    if not path.exists():
-        raise FileNotFoundError(f"Run path does not exist: {path}")
-    return path
+    if not path.is_dir():
+        if not path.exists():
+            raise FileNotFoundError(f"Run path does not exist: {path}")
+        return path
+    wanted = metrics_filename(stream, rank_aware=False)
+    exact = path / wanted
+    if exact.is_file():
+        return exact
+    # Fall back to this stream's rank shards, which a worker rank writes instead
+    prefix = wanted[: -len(".jsonl")]
+    shards = sorted(path.glob(f"{prefix}.rank*.jsonl"))
+    if shards:
+        return shards[0]
+    raise FileNotFoundError(f"No {wanted} found under {path}; {_available(path)}")
+
+
+def _available(path: Path) -> str:
+    found = sorted(p.name for p in path.glob("metrics*.jsonl"))
+    return f"available: {', '.join(found)}" if found else "the directory has none"
+
+
+def list_streams(run: str | Path) -> list[str | None]:
+    """Every stream in a run directory; ``None`` is the default producer."""
+    streams: set[str | None] = set()
+    for path in Path(run).glob("metrics*.jsonl"):
+        parts = path.name.split(".")[1:-1]  # drop "metrics" and "jsonl"
+        if parts and RANK_PATTERN.fullmatch(parts[-1]):
+            parts = parts[:-1]
+        streams.add(parts[0] if parts else None)
+    return sorted(streams, key=lambda s: (s is not None, s or ""))

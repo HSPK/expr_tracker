@@ -13,6 +13,7 @@ list of valid options rather than being silently ignored.
 | `max_open_seconds` | 60.0 | commit an idle open row after this long; `None` disables |
 | `step_policy` | `"monotonic"` | `"monotonic"` drops backward steps, `"allow"` keeps them |
 | `rank_aware` | `True` | non-zero ranks write their own shard |
+| `stream` | `None` | an independent producer with its own file and step cursor |
 | `print_to_screen` | `False` | print every committed row |
 | `print_handle` | `print` | where those lines go |
 | `buffer_size` | 50 | flush after this many buffered rows |

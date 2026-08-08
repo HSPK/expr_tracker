@@ -34,6 +34,7 @@ nav:
       - Querying history: guide/history.md
       - Alerts: guide/alerts.md
       - Artifacts: guide/artifacts.md
+      - Streams: guide/streams.md
       - Distributed runs: guide/distributed.md
       - Backends: guide/backends.md
       - CLI: guide/cli.md

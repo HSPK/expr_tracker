@@ -10,6 +10,7 @@ from typing import Literal
 from .artifacts import Artifact
 from .history import read_history
 from .run import Run, current_run, require_run, set_run
+from .run import current_run as current
 
 Tracker = Run
 
@@ -70,9 +71,23 @@ def log(data: dict, step: int | None = None, commit: bool | None = None):
     require_run().log(data, step=step, commit=commit)
 
 
+class _Current:
+    """Sentinel: ``stream`` was not given, so use the running stream.
+
+    ``stream=None`` has to keep meaning the default, unnamed producer.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "<current stream>"
+
+
+CURRENT_STREAM = _Current()
+
+
 def history(
     n: int | None = 50,
     *,
+    stream: str | _Current | None = CURRENT_STREAM,
     output_type: str = "dict",
     metrics: Sequence[str] | None = None,
     step_range: tuple[int | None, int | None] | None = None,
@@ -86,25 +101,32 @@ def history(
 
     ``output_type="pandas"`` returns a DataFrame (pandas is an optional extra).
     Passing ``run`` reads that run directory or file offline, without ``init()``.
+    ``stream`` selects an independent producer, ``None`` being the default one;
+    another process's stream is read from its file, so it reflects what that
+    process has flushed. Omit it to read whichever stream this process writes.
     """
-    if run is not None:
-        return read_history(
-            run,
+    active = getattr(current(), "stream", None)
+    if run is None and (stream is CURRENT_STREAM or stream == active):
+        return require_run().history.get(
             n,
             output_type=output_type,
             metrics=metrics,
             step_range=step_range,
             include_meta=include_meta,
+            include_open=include_open,
             fill_missing=fill_missing,
             dropna=dropna,
         )
-    return require_run().history.get(
+    if run is None:
+        run = require_run().history.log_dir
+    return read_history(
+        run,
         n,
+        stream=None if stream is CURRENT_STREAM else stream,
         output_type=output_type,
         metrics=metrics,
         step_range=step_range,
         include_meta=include_meta,
-        include_open=include_open,
         fill_missing=fill_missing,
         dropna=dropna,
     )

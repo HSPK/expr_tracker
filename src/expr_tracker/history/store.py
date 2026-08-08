@@ -13,7 +13,6 @@ from __future__ import annotations
 import atexit
 import json
 import operator
-import os
 import threading
 import time
 from collections import deque
@@ -25,6 +24,7 @@ from loguru import logger
 
 from .codec import RESERVED_KEYS, RecordCodec, encode_line
 from .frame import project, to_output
+from .naming import metrics_filename, sidecar_filename, validate_stream
 from .reader import JsonlReader, merge_steps
 from .series import DEFAULT_WINDOW, MetricSeries
 from .writer import (
@@ -65,6 +65,8 @@ class HistoryOptions:
     max_open_seconds: float | None = DEFAULT_MAX_OPEN_SECONDS
     step_policy: str = "monotonic"
     rank_aware: bool = True
+    # an independent producer writing its own file with its own step cursor
+    stream: str | None = None
     # alerts and output
     alert_window: int = DEFAULT_WINDOW
     print_to_screen: bool = False
@@ -76,6 +78,8 @@ class HistoryOptions:
                 f"Unknown step_policy {self.step_policy!r}; "
                 f"expected one of {', '.join(STEP_POLICIES)}."
             )
+        if self.stream is not None:
+            object.__setattr__(self, "stream", validate_stream(self.stream))
         clamped = {
             "cache_bytes": max(0, int(self.cache_bytes)),
             "cache_rows": max(1, int(self.cache_rows)),
@@ -128,6 +132,7 @@ class HistoryStore:
         self.log_dir: Path | None = None
         self.log_fp: Path | None = None
         self.config_fp: Path | None = None
+        self.stream: str | None = None
         self.project: str = ""
         self.name: str = ""
         self._reset(HistoryOptions(), on_commit=None)
@@ -177,8 +182,9 @@ class HistoryStore:
         self.project, self.name = project, name
         self.log_dir = Path(dir or "./tracker/jsonl") / project / name
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.config_fp = self.log_dir / "config.json"
-        self.log_fp = self.log_dir / _metrics_filename(opts.rank_aware)
+        self.stream = opts.stream
+        self.config_fp = self.log_dir / sidecar_filename("config", opts.stream, "json")
+        self.log_fp = self.log_dir / metrics_filename(opts.stream, opts.rank_aware)
 
         self._close_previous()
         self._reset(opts, on_commit)
@@ -756,21 +762,6 @@ class HistoryStore:
 
 
 # ---------------------------------------------------------------------- helpers
-
-
-def current_rank() -> int:
-    """Distributed rank from the usual environment variables, 0 when unset."""
-    rank = os.getenv("RANK") or os.getenv("LOCAL_RANK") or "0"
-    try:
-        return int(rank)
-    except ValueError:
-        return 0
-
-
-def _metrics_filename(rank_aware: bool) -> str:
-    """Non-zero ranks get their own shard so appends cannot interleave."""
-    rank = current_rank() if rank_aware else 0
-    return "metrics.jsonl" if rank <= 0 else f"metrics.rank{rank}.jsonl"
 
 
 def _parse_cached(entries: Sequence[tuple[int, int, bytes]]) -> list[dict]:
