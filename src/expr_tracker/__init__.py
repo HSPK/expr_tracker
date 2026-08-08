@@ -19,6 +19,7 @@ from .alerts import (
 )
 from .artifacts import Artifact
 from .run import Run
+from .spans import Span, span, start_span
 
 try:
     __version__ = _version("expr_tracker")
@@ -45,6 +46,7 @@ __all__ = [
     "ChannelConfig",
     "M",
     "Run",
+    "Span",
     "WebhookPolicy",
     "__version__",
     "add_alert_rule",
@@ -61,6 +63,8 @@ __all__ = [
     "log_artifact",
     "register_backend",
     "remove_alert_rule",
+    "span",
+    "start_span",
     "summary",
     "use_artifact",
 ]

@@ -93,7 +93,30 @@ A stream is forwarded to a backend as its own run, grouped under the run name.
 Neither wandb nor trackio can merge two step axes into one run; wandb's shared
 mode can, but requires a live server and has no trackio equivalent.
 
-### A.5 Multiple processes
+### A.5 Spans
+
+`et.span` times a region and its children. A closed span takes the same ingress as
+`log()` — `HistoryStore.ingest()` — so the step policy, the open-row merge and the
+commit rules exist in one place regardless of which API produced the metrics.
+
+Two differences from a log call:
+
+- the merge **accumulates** rather than replaces, because the same span can run
+  many times in one step;
+- the metrics are built here from floats and ints, so they skip `RecordCodec`.
+  That encoder costs 5 µs, which a per-sub-step call cannot afford.
+
+A span never commits a step: durations ride along with whatever `log()` commits,
+so timing a region adds no row. The tree, with timestamps and attributes, goes to
+`spans[.stream][.rankN].jsonl` through a second `JsonlWriter`, enqueued rather
+than appended so a span does not pay for a flush decision of its own.
+
+The nesting stack is a `ContextVar`, not a `threading.local`: a new thread starts
+from the default and each asyncio task gets its own copy, which is exactly the
+scoping spans need. (The run singleton went the other way, from `ContextVar` to a
+locked global, because there the goal was for worker threads to *share* it.)
+
+### A.6 Multiple processes
 
 The supported model is **rank 0 tracks**; there is no cross-rank merging.
 

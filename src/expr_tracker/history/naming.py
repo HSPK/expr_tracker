@@ -56,6 +56,11 @@ def metrics_filename(stream: str | None, rank_aware: bool = True) -> str:
     return ".".join(parts) + ".jsonl"
 
 
+def spans_filename(stream: str | None, rank_aware: bool = True) -> str:
+    """``spans[.stream][.rankN].jsonl``, alongside the metrics file."""
+    return metrics_filename(stream, rank_aware).replace("metrics", "spans", 1)
+
+
 def sidecar_filename(base: str, stream: str | None, suffix: str) -> str:
     """``<base>[.stream].<suffix>``, so producers do not overwrite each other."""
     return f"{base}.{stream}.{suffix}" if stream else f"{base}.{suffix}"

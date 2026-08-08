@@ -153,6 +153,18 @@ et.register_backend(kind: str, cls: type[AlertBackend])
 
 Registers a custom channel type.
 
+## Spans
+
+```python
+with et.span(name, **attributes) as span: ...   # also async, also a decorator
+span = et.start_span(name, **attributes)        # ends with span.end()
+span.set(**attributes)
+span.duration_ms
+```
+
+A closed span adds `<path>/duration_ms` and `<path>/count` to the open row and
+appends the full record to `spans.jsonl`. See [Spans](../guide/spans.md).
+
 ## Artifacts
 
 ```python

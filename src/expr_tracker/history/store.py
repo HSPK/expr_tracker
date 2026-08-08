@@ -24,7 +24,12 @@ from loguru import logger
 
 from .codec import RESERVED_KEYS, RecordCodec, encode_line
 from .frame import project, to_output
-from .naming import metrics_filename, sidecar_filename, validate_stream
+from .naming import (
+    metrics_filename,
+    sidecar_filename,
+    spans_filename,
+    validate_stream,
+)
 from .reader import JsonlReader, merge_steps
 from .series import DEFAULT_WINDOW, MetricSeries
 from .writer import (
@@ -67,6 +72,8 @@ class HistoryOptions:
     rank_aware: bool = True
     # an independent producer writing its own file with its own step cursor
     stream: str | None = None
+    # write the full span tree to spans.jsonl beside the metrics
+    spans: bool = True
     # alerts and output
     alert_window: int = DEFAULT_WINDOW
     print_to_screen: bool = False
@@ -132,6 +139,8 @@ class HistoryStore:
         self.log_dir: Path | None = None
         self.log_fp: Path | None = None
         self.config_fp: Path | None = None
+        self.spans_fp: Path | None = None
+        self.span_writer: JsonlWriter | None = None
         self.stream: str | None = None
         self.project: str = ""
         self.name: str = ""
@@ -184,11 +193,27 @@ class HistoryStore:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.stream = opts.stream
         self.config_fp = self.log_dir / sidecar_filename("config", opts.stream, "json")
+        self.spans_fp = (
+            self.log_dir / spans_filename(opts.stream, opts.rank_aware)
+            if opts.spans
+            else None
+        )
         self.log_fp = self.log_dir / metrics_filename(opts.stream, opts.rank_aware)
 
         self._close_previous()
         self._reset(opts, on_commit)
         self.writer = self._open_writer(opts)
+        self.span_writer = (
+            JsonlWriter(
+                self.spans_fp,
+                buffer_size=opts.buffer_size,
+                buffer_interval=opts.buffer_interval,
+                max_buffer_seconds=opts.max_buffer_seconds,
+                max_pending_records=opts.max_pending_records,
+            )
+            if self.spans_fp is not None
+            else None
+        )
         self._resume(opts.alert_window)
         self._write_config(config)
         self._register_atexit()
@@ -197,8 +222,9 @@ class HistoryStore:
     def _close_previous(self):
         """Re-initialising must not strand the previous writer's buffer or timer."""
         self._cancel_open_timer()
-        if self.writer is not None:
-            self.writer.close()
+        for writer in (self.writer, self.span_writer):
+            if writer is not None:
+                writer.close()
 
     def _open_writer(self, options: HistoryOptions) -> JsonlWriter:
         assert self.log_fp is not None
@@ -282,7 +308,24 @@ class HistoryStore:
         ``is None``, since step 0 is falsy.
         """
         self._require_init()
-        encoded = self._codec.encode(metrics)
+        return self.ingest(self._codec.encode(metrics), step=step, commit=commit)
+
+    def ingest(
+        self,
+        encoded: dict,
+        *,
+        step: int | None = None,
+        commit: bool | None = None,
+        accumulate: bool = False,
+    ) -> int | None:
+        """The single path metrics take into the open row.
+
+        ``log()`` and span durations both come through here, so the step policy,
+        the merge and the commit rules only exist once. ``accumulate`` adds to any
+        existing value instead of replacing it, which is what repeated spans in
+        one step need.
+        """
+        self._require_init()
         now = time.time()
         pending: list[dict] = []
         with self._lock:
@@ -293,13 +336,35 @@ class HistoryStore:
                 return None
             pending.append(self._switch_open_row(step, now))
             resolved = self._open_step
-            self._update_open_row(encoded)
+            self._update_open_row(encoded, accumulate)
             if resolve_commit(step, commit):
                 pending.append(self._close_open_row())
         for record in filter(None, pending):
             self._emit(record)
         self._schedule_open_timer()
         return resolved
+
+    def record_span(self, metrics: dict, record: dict | None = None) -> int | None:
+        """A finished span: durations join the open row, the tree goes to disk.
+
+        Durations never commit a step of their own -- they ride along with
+        whatever ``log()`` commits, so a span costs no extra row. The metrics are
+        built from floats and ints here, so they skip the encoder: spans are
+        recorded per sub-step and cannot afford it.
+        """
+        step = self.ingest(metrics, commit=False, accumulate=True)
+        if record is None or self.span_writer is None or step is None:
+            return step
+        try:
+            line = encode_line({"_step": step, **record})
+        except Exception as e:
+            logger.warning(f"Dropping span that cannot be serialized: {e}")
+            return step
+        # enqueue, not append: the batch goes out when the step commits, so a
+        # span does not pay for a flush decision of its own
+        if self.span_writer.enqueue(step, self.span_writer.lines, line):
+            self.span_writer.flush()
+        return step
 
     def _switch_open_row(self, step: int | None, now: float) -> dict | None:
         """Point the open row at ``step``, returning the row it displaced, if any.
@@ -337,12 +402,18 @@ class HistoryStore:
         if timer is not None:
             timer.cancel()
 
-    def _update_open_row(self, encoded: dict):
+    def _update_open_row(self, encoded: dict, accumulate: bool = False):
         for key in RESERVED_KEYS & set(encoded):
             self._codec.warn_once(
                 key, f"Metric name {key!r} is reserved and will be ignored."
             )
             encoded.pop(key)
+        if accumulate:
+            # Repeated spans in one step sum rather than overwrite
+            for key, value in encoded.items():
+                current = self._open_row.get(key)
+                self._open_row[key] = value + current if _addable(current) else value
+            return
         for key in encoded:
             if key in self._open_row:
                 self._codec.warn_once(
@@ -486,8 +557,9 @@ class HistoryStore:
                 record = self._close_open_row()
         if record is not None:
             self._emit(record)
-        if self.writer is not None:
-            self.writer.flush()
+        for writer in (self.writer, self.span_writer):
+            if writer is not None:
+                writer.flush()
 
     def finish(self):
         """Close the store. Never raises: a bad disk must not mask the real error."""
@@ -498,11 +570,12 @@ class HistoryStore:
             self.flush(commit_open=True)
         except Exception as e:
             logger.warning(f"Failed to flush history on finish: {e}")
-        if self.writer is not None:
-            try:
-                self.writer.close()
-            except Exception as e:
-                logger.warning(f"Failed to close {self.log_fp}: {e}")
+        for writer in (self.writer, self.span_writer):
+            if writer is not None:
+                try:
+                    writer.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close {writer.path}: {e}")
         if self._atexit_registered:
             atexit.unregister(self._atexit)
             self._atexit_registered = False
@@ -762,6 +835,10 @@ class HistoryStore:
 
 
 # ---------------------------------------------------------------------- helpers
+
+
+def _addable(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _parse_cached(entries: Sequence[tuple[int, int, bytes]]) -> list[dict]:
