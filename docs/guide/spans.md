@@ -221,8 +221,12 @@ et.history(1)[0]
 Like `print_fn`, plugins are inherited by children, can be overridden per span,
 and can be set run-wide with `span_plugins`. They are opt-in because they are not
 free. A plugin that raises is logged and skipped; it never breaks the span or the
-code being measured. Plugin metrics also reach `spans.jsonl` and show up in the
-`et trace` viewer under a span's *Arguments*.
+code being measured, and a plugin that fails on every span is logged only once.
+Plugin metrics also reach `spans.jsonl` and show up in the `et trace` viewer
+under a span's *Arguments*.
+
+`duration_ms` and `count` belong to the span. A plugin returning either has that
+key dropped with a warning, so nothing can quietly redefine what a span measured.
 
 ### Built-ins
 

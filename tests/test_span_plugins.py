@@ -47,6 +47,8 @@ def lines():
 
 def span_records(run_obj):
     path = run_obj.history.log_dir / spans_filename(None, True)
+    if not path.exists():
+        return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
@@ -526,6 +528,63 @@ def test_the_warning_cache_cannot_grow_without_bound(monkeypatch):
     for i in range(600):
         spans_mod._warn_once("P", "end", f"failure {i}")
     assert len(spans_mod._WARNED) <= 257
+
+
+def test_a_plugin_cannot_overwrite_the_span_timing(run):
+    """duration_ms and count are the span's contract, not a plugin's to set."""
+    run()
+    with et.span(
+        "a", plugins=[lambda s: {"duration_ms": 999.0, "count": 42, "ok": 7}]
+    ) as sp:
+        pass
+    et.log({"loss": 1.0})
+    row = et.history(1)[0]
+    assert row["a/duration_ms"] == sp.duration_ms != 999.0
+    assert row["a/count"] == 1
+    assert row["a/ok"] == 7  # the rest of the plugin's metrics still land
+    assert "duration_ms" not in sp.metrics
+
+
+def test_a_span_that_never_began_records_nothing(run):
+    """Constructing a Span without begin() must not invent an epoch duration."""
+    from expr_tracker.spans import Span
+
+    r = run()
+    assert Span("orphan", r.history).end() == 0.0
+    et.log({"loss": 1.0})
+    assert not any(key.startswith("orphan") for key in et.history(1)[0])
+    et.finish()
+    assert span_records(r) == []
+
+
+def test_a_broken_print_handler_warns_once(run, monkeypatch):
+    from expr_tracker import spans as spans_mod
+
+    monkeypatch.setattr(spans_mod, "_WARNED", set())
+    warnings = []
+    handle = spans_mod.logger.add(lambda m: warnings.append(m), level="WARNING")
+    try:
+        run()
+
+        def broken(line):
+            raise RuntimeError("printer is down")
+
+        for _ in range(20):
+            with et.span("a", print_fn=broken):
+                pass
+    finally:
+        spans_mod.logger.remove(handle)
+    assert len(warnings) == 1
+
+
+def test_ending_twice_does_not_run_the_hooks_again(run, lines):
+    plugin = Recorder()
+    run()
+    sp = et.start_span("a", print_fn=lines.append, plugins=[plugin])
+    first = sp.end()
+    assert sp.end() == first
+    assert len(plugin.calls) == 2
+    assert len(lines) == 2
 
 
 def test_a_plugin_returning_a_non_dict_is_ignored(run):

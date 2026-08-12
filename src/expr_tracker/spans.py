@@ -25,6 +25,7 @@ _STACK: ContextVar[tuple[Span, ...]] = ContextVar("et_span_stack", default=())
 
 DURATION_SUFFIX = "duration_ms"
 COUNT_SUFFIX = "count"
+RESERVED_METRICS = frozenset({DURATION_SUFFIX, COUNT_SUFFIX})
 
 
 _WARNED: set[tuple[str, str, str]] = set()
@@ -146,7 +147,8 @@ class Span:
 
     def end(self, error: BaseException | None = None) -> float:
         """Close the span and record it. Returns the duration in milliseconds."""
-        if self._ended:
+        if self._ended or self.started_at == 0.0:
+            # Never begun: there is no duration to report and nothing to record
             return self.duration_ms
         self._ended = True
         self.duration_ms = (time.perf_counter() - self.start) * 1000.0
@@ -155,7 +157,7 @@ class Span:
         for plugin in self.plugins:
             measured = _safely(plugin, "end", self)
             if isinstance(measured, dict):
-                self.metrics.update(measured)
+                self.metrics.update(self._admissible(plugin, measured))
         if self._token is not None:
             # Drop ourselves rather than resetting the token. A token restores
             # the whole stack as it was, so a span ended out of order would
@@ -165,6 +167,15 @@ class Span:
         self._record()
         self._announce("<-", self.duration_ms)
         return self.duration_ms
+
+    def _admissible(self, plugin: Any, measured: dict) -> dict:
+        """A plugin may add metrics to a span; it may not redefine its timing."""
+        if not RESERVED_METRICS.intersection(measured):
+            return measured
+        name = type(plugin).__name__
+        for key in RESERVED_METRICS.intersection(measured):
+            _warn_once(name, key, f"Span plugin {name} may not set {key!r}; ignored")
+        return {k: v for k, v in measured.items() if k not in RESERVED_METRICS}
 
     def _announce(self, marker: str, duration_ms: float | None):
         if self.print_fn is None:
@@ -185,7 +196,7 @@ class Span:
         try:
             self.print_fn(line)
         except Exception as e:  # printing must never break the thing measured
-            logger.warning(f"Span print handler failed: {e}")
+            _warn_once("print_fn", type(e).__name__, f"Span print handler failed: {e}")
 
     def set(self, **attributes: Any) -> Span:
         """Attach attributes; they reach ``spans.jsonl``, not the metrics."""
