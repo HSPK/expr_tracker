@@ -156,14 +156,35 @@ Registers a custom channel type.
 ## Spans
 
 ```python
-with et.span(name, **attributes) as span: ...   # also async, also a decorator
-span = et.start_span(name, **attributes)        # ends with span.end()
+with et.span(name, print_fn=None, plugins=(), **attributes) as span: ...
+span = et.start_span(name, print_fn=None, plugins=(), **attributes)
 span.set(**attributes)
 span.duration_ms
+span.metrics                                    # what the plugins measured
 ```
 
-A closed span adds `<path>/duration_ms` and `<path>/count` to the open row and
-appends the full record to `spans.jsonl`. See [Spans](../guide/spans.md).
+`et.span` is also an async context manager and a decorator. A closed span adds
+`<path>/duration_ms`, `<path>/count` and one key per plugin metric to the open
+row, and appends the full record to `spans.jsonl`.
+
+`print_fn(line)` announces the span's start and end, indented one tab per level.
+`plugins` measure a resource across the span; both are inherited by child spans
+and default to the run's `span_print_fn` and `span_plugins`.
+
+### Plugins
+
+```python
+from expr_tracker.plugins import CpuTime, GpuStats, TorchMemory
+```
+
+| plugin | metrics |
+| --- | --- |
+| `CpuTime()` | `cpu_time_ms`, `cpu_percent` |
+| `TorchMemory(device=None)` | `gpu_mem_peak_mb`, `gpu_mem_delta_mb` |
+| `GpuStats(index=0, interval=0.1)` | `gpu_percent`, `gpu_mem_used_mb` |
+
+Any object with `start(span)` and `end(span) -> dict` is a plugin, as is a plain
+`fn(span) -> dict`. See [Spans](../guide/spans.md).
 
 ### Trace export
 

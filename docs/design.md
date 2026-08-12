@@ -111,6 +111,26 @@ so timing a region adds no row. The tree, with timestamps and attributes, goes t
 `spans[.stream][.rankN].jsonl` through a second `JsonlWriter`, enqueued rather
 than appended so a span does not pay for a flush decision of its own.
 
+Plugins hang off the same two hooks. `start` runs before the clock starts and
+`end` after it stops, so a plugin never inflates the duration it reports on; what
+`end` returns is merged into the span's metrics under the span's own path, which
+means a plugin needs no knowledge of the store, the codec or the accumulate rule.
+A plugin that raises is logged and dropped: a measurement must not break the
+thing it measures.
+
+Peak-memory plugins have to fight the fact that `torch.cuda.max_memory_allocated`
+is one global high-water mark. Resetting it per span is the only way to attribute
+a peak, but a child's reset destroys its parent's history. `TorchMemory` keeps a
+per-thread stack and, as each span closes, hands its parent back the peak the
+parent had reached before that child opened, so `max(counter, carried)` is
+correct at every level.
+
+GPU utilisation cannot be attributed by reading NVML at a span boundary: the
+counter is a rolling average over NVML's own window, so for a 3 ms span it
+describes the wrong interval entirely. `GpuStats` samples in a background thread
+and each span averages the samples that fall inside it, which also keeps the
+NVML call off the measured path.
+
 The nesting stack is a `ContextVar`, not a `threading.local`: a new thread starts
 from the default and each asyncio task gets its own copy, which is exactly the
 scoping spans need. (The run singleton went the other way, from `ContextVar` to a

@@ -149,6 +149,7 @@ def build_trace(
             start = float(record["start"])
             origin = start if origin is None else min(origin, start)
             args = dict(record.get("args") or {})
+            args.update(record.get("metrics") or {})
             args["step"] = record.get("_step")
             if record.get("error"):
                 args["error"] = record["error"]

@@ -1,7 +1,7 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version
 
-from . import tracker
+from . import plugins, tracker
 from .alerts import (
     AlertConfig,
     AlertLevel,
@@ -61,6 +61,7 @@ __all__ = [
     "list_alert_rules",
     "log",
     "log_artifact",
+    "plugins",
     "register_backend",
     "remove_alert_rule",
     "span",

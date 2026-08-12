@@ -19,6 +19,7 @@ from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -74,6 +75,9 @@ class HistoryOptions:
     stream: str | None = None
     # write the full span tree to spans.jsonl beside the metrics
     spans: bool = True
+    # run-wide defaults for et.span(); a span's own arguments win
+    span_print_fn: Callable[[str], None] | None = None
+    span_plugins: Sequence[Any] = ()
     # alerts and output
     alert_window: int = DEFAULT_WINDOW
     print_to_screen: bool = False

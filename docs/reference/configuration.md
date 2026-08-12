@@ -15,6 +15,8 @@ list of valid options rather than being silently ignored.
 | `rank_aware` | `True` | non-zero ranks write their own shard |
 | `stream` | `None` | an independent producer with its own file and step cursor |
 | `spans` | `True` | write the span tree to `spans.jsonl` beside the metrics |
+| `span_print_fn` | `None` | default `print_fn` for every span in the run |
+| `span_plugins` | `()` | default plugins for every span in the run |
 | `print_to_screen` | `False` | print every committed row |
 | `print_handle` | `print` | where those lines go |
 | `buffer_size` | 50 | flush after this many buffered rows |

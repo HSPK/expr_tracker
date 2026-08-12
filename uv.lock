@@ -480,11 +480,15 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "nvidia-ml-py" },
     { name = "pandas" },
     { name = "polars" },
     { name = "slark" },
     { name = "trackio" },
     { name = "wandb" },
+]
+gpu = [
+    { name = "nvidia-ml-py" },
 ]
 lark = [
     { name = "slark" },
@@ -524,6 +528,8 @@ docs = [
 requires-dist = [
     { name = "click", specifier = ">=8.1.0" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "nvidia-ml-py", marker = "extra == 'all'", specifier = ">=12.0" },
+    { name = "nvidia-ml-py", marker = "extra == 'gpu'", specifier = ">=12.0" },
     { name = "pandas", marker = "extra == 'all'", specifier = ">=1.5" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=1.5" },
     { name = "polars", marker = "extra == 'all'", specifier = ">=0.20" },
@@ -536,7 +542,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'all'", specifier = ">=0.21.0" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.21.0" },
 ]
-provides-extras = ["all", "lark", "pandas", "polars", "trackio", "wandb"]
+provides-extras = ["all", "gpu", "lark", "pandas", "polars", "trackio", "wandb"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1274,6 +1280,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/c9/142c1e03f199d202da8e980c2496213509291b6024fd2735ad28ae7065c7/numpy-2.3.2-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8446acd11fe3dc1830568c941d44449fd5cb83068e5c70bd5a470d323d448296", size = 14419651, upload-time = "2025-07-24T20:58:59.048Z" },
     { url = "https://files.pythonhosted.org/packages/8b/95/8023e87cbea31a750a6c00ff9427d65ebc5fef104a136bfa69f76266d614/numpy-2.3.2-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:aa098a5ab53fa407fded5870865c6275a5cd4101cfdef8d6fafc48286a96e981", size = 16760166, upload-time = "2025-07-24T21:28:56.38Z" },
     { url = "https://files.pythonhosted.org/packages/78/e3/6690b3f85a05506733c7e90b577e4762517404ea78bab2ca3a5cb1aeb78d/numpy-2.3.2-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:6936aff90dda378c09bea075af0d9c675fe3a977a9d2402f95a87f440f59f619", size = 12977811, upload-time = "2025-07-24T21:29:18.234Z" },
+]
+
+[[package]]
+name = "nvidia-ml-py"
+version = "13.610.43"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/b5/a8fbc356f768fa5c9cfd646668fd7d34bf55bdd1c6e20754642a64d930d4/nvidia_ml_py-13.610.43.tar.gz", hash = "sha256:65437eb73d68d0c62c931ca4d45038472faff03bd0b8729abba4b899f70d60f2", size = 52109, upload-time = "2026-06-01T18:54:08.829Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/45/caa600acfab94560807a20a64b5830d2cd3c3202b7f1328644d70b7d6bd8/nvidia_ml_py-13.610.43-py3-none-any.whl", hash = "sha256:f13c72698edef492f985cc225f14faafe68ae065a2e407f45bdf6f4b9b43fde8", size = 53163, upload-time = "2026-06-01T18:54:07.704Z" },
 ]
 
 [[package]]

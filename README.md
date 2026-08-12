@@ -59,7 +59,7 @@ install command; it never crashes a run.
 | [Alerts](https://hspk.github.io/expr_tracker/guide/alerts/) | An expression DSL with rolling windows, three-valued logic (no false alarms during warm-up), a rule state machine, and a watchdog that catches a hung run. |
 | [Channels](https://hspk.github.io/expr_tracker/guide/alerts/#channels) | Lark, Slack, DingTalk, WeCom, generic webhook, email — with rate limiting, dedup, retries and per-channel routing. |
 | [Artifacts](https://hspk.github.io/expr_tracker/guide/artifacts/) | Versioned file sets, deduplicated by content, shared across a project's runs, with lineage. |
-| [Spans](https://hspk.github.io/expr_tracker/guide/spans/) | Time the parts of a step, and their parts. Each duration becomes a metric, so alerts and queries work on it unchanged; `et trace` exports the timeline for Perfetto. |
+| [Spans](https://hspk.github.io/expr_tracker/guide/spans/) | Time the parts of a step, and their parts. Each duration becomes a metric, so alerts and queries work on it unchanged; `et trace` exports the timeline for Perfetto. `print_fn` prints the tree live, and plugins attach CPU and GPU cost to each region. |
 | [Streams](https://hspk.github.io/expr_tracker/guide/streams/) | Independent producers — a data worker and a training loop — each with their own step cursor and file inside one run. |
 | [Distributed](https://hspk.github.io/expr_tracker/guide/distributed/) | Per-rank shards so concurrent appends cannot corrupt step order; only rank 0 alerts by default. |
 | [CLI](https://hspk.github.io/expr_tracker/guide/cli/) | `et history`, `et rules explain`, `et rules test`, `et alert`. |
@@ -105,6 +105,7 @@ uv run ruff format src tests
 | `test_expr_properties.py` | DSL properties: render round-trip stability, precedence, the whole `M` builder |
 | `test_trace.py` | Chrome Trace export: lane layout, stream and step selection, the CLI |
 | `test_spans.py` | nesting, aggregation, decorator and async forms, errors, thread and task isolation |
+| `test_span_plugins.py` | `print_fn` output and indentation, the plugin protocol, failure isolation, CPU/GPU built-ins |
 | `test_streams.py` | stream naming and validation, isolation, resolution order, backend grouping, two-process runs |
 | `test_distributed.py` | rank shards, `alert_on_rank`, real multi-process runs |
 | `test_wandb.py` | real wandb in offline mode: parameter mapping, step alignment, artifacts |
