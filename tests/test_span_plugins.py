@@ -73,6 +73,138 @@ def test_indents_one_tab_per_level(run, lines):
     assert lines[2].startswith("\t\t-> c")
 
 
+def test_indentation_is_relative_to_where_printing_started(run, lines):
+    """A silent parent must not leave a stray leading tab on its child."""
+    run()
+    with (
+        et.span("outer"),
+        et.span("mid"),
+        et.span("inner", print_fn=lines.append),
+        et.span("leaf"),
+    ):
+        pass
+    assert [line.count("\t") for line in lines] == [0, 1, 1, 0]
+    assert lines[0] == lines[0].lstrip("\t")
+
+
+def test_an_overriding_child_roots_its_own_indentation(run, lines):
+    other = []
+    run()
+    with (
+        et.span("a", print_fn=lines.append),
+        et.span("b"),
+        et.span("c", print_fn=other.append),
+        et.span("d"),
+    ):
+        pass
+    assert [line.count("\t") for line in other] == [0, 1, 1, 0]
+
+
+def test_the_run_default_still_indents_the_whole_tree(run, lines):
+    """The default is one shared handler, so nesting must survive it."""
+    run(span_print_fn=lines.append)
+    with et.span("a"), et.span("b"), et.span("c"):
+        pass
+    assert [line.count("\t") for line in lines] == [0, 1, 2, 2, 1, 0]
+
+
+def test_indentation_keeps_up_with_deep_nesting(run, lines):
+    run()
+    depth = 12
+    spans = [et.span("s0", print_fn=lines.append).__enter__()]
+    spans += [et.span(f"s{i}").__enter__() for i in range(1, depth)]
+    for sp in reversed(spans):
+        sp.end()
+    assert [line.count("\t") for line in lines[:depth]] == list(range(depth))
+
+
+def test_a_new_thread_starts_a_fresh_tree(run, lines):
+    """Threads do not inherit the stack, so a worker must not be indented."""
+    run()
+    inner = []
+
+    def work():
+        with et.span("worker", print_fn=inner.append):
+            pass
+
+    with et.span("main", print_fn=lines.append):
+        thread = threading.Thread(target=work)
+        thread.start()
+        thread.join()
+    assert [line.count("\t") for line in inner] == [0, 0]
+
+
+def test_concurrent_tasks_are_each_indented_by_their_own_depth(run, lines):
+    run()
+
+    async def leg(name):
+        async with et.span(name), et.span("sub"):
+            await asyncio.sleep(0.01)
+
+    async def main():
+        async with et.span("gather", print_fn=lines.append):
+            await asyncio.gather(leg("a"), leg("b"))
+
+    asyncio.run(main())
+    by_name = {}
+    for line in lines:
+        parts = line.split()
+        by_name.setdefault(parts[1], []).append(line.count("\t"))
+    assert by_name["gather"] == [0, 0]
+    assert by_name["a"] == [1, 1] and by_name["b"] == [1, 1]
+    assert by_name["sub"] == [2, 2, 2, 2]
+
+
+def test_a_recursive_span_indents_by_recursion_depth(run, lines):
+    run()
+
+    @et.span("fib", print_fn=lines.append)
+    def fib(n):
+        return n if n < 2 else fib(n - 1) + fib(n - 2)
+
+    fib(2)
+    assert [line.count("\t") for line in lines] == [0, 1, 1, 1, 1, 0]
+
+
+def test_a_span_ended_out_of_order_does_not_resurrect_itself(run):
+    """Resetting the ContextVar token would restore the whole stack with it."""
+    from expr_tracker.spans import _STACK
+
+    run()
+    outer = et.start_span("outer")
+    inner = et.start_span("inner")
+    outer.end()
+    assert [sp.name for sp in _STACK.get()] == ["inner"]
+    inner.end()
+    assert _STACK.get() == ()
+    after = et.start_span("after")
+    assert after.path == "after"  # not "outer/after"
+    after.end()
+
+
+def test_out_of_order_ends_keep_the_indentation_honest(run, lines):
+    run()
+    outer = et.start_span("outer", print_fn=lines.append)
+    inner = et.start_span("inner")
+    outer.end()
+    inner.end()
+    later = et.start_span("later", print_fn=lines.append)
+    later.end()
+    assert [line.count("\t") for line in lines] == [0, 1, 0, 1, 0, 0]
+
+
+def test_a_slashed_name_does_not_fake_a_level(run, lines):
+    """`depth` is nesting, not a count of slashes in the path."""
+    r = run()
+    with et.span("data/load", print_fn=lines.append), et.span("decode"):
+        pass
+    et.log({"loss": 1.0})
+    et.finish()
+    assert [line.count("\t") for line in lines] == [0, 1, 1, 0]
+    records = {rec["name"]: rec["depth"] for rec in span_records(r)}
+    assert records == {"data/load": 0, "data/load/decode": 1}
+
+
 def test_children_inherit_the_handler(run, lines):
     run()
     with et.span("outer", print_fn=lines.append), et.span("inner"):
@@ -263,6 +395,7 @@ def test_plugin_metrics_reach_the_span_file(run):
     with et.span("a", plugins=[Recorder(4.0)]):
         pass
     et.log({"loss": 1.0})
+    et.finish()
     assert span_records(r)[0]["metrics"] == {"thing": 4.0}
 
 

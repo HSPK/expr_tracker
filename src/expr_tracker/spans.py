@@ -87,6 +87,7 @@ class Span:
         "name",
         "path",
         "plugins",
+        "print_depth",
         "print_fn",
         "start",
         "started_at",
@@ -109,6 +110,7 @@ class Span:
         self.plugins = tuple(plugins)
         self.metrics: dict[str, Any] = {}
         self.depth = 0
+        self.print_depth = 0
         self.path = self.name
         self.track = 0
         self.start = 0.0
@@ -128,6 +130,10 @@ class Span:
         self.track = parent.track if parent else threading.get_ident()
         if self.print_fn is None and parent is not None:
             self.print_fn = parent.print_fn  # inherited, so a tree prints as one
+        if parent is not None and parent.print_fn is self.print_fn:
+            self.print_depth = parent.print_depth + 1
+        # else this span roots its own output: indent from 0, not from a parent
+        # that printed nothing
         if not self.plugins and parent is not None:
             self.plugins = parent.plugins
         for plugin in self.plugins:
@@ -151,10 +157,11 @@ class Span:
             if isinstance(measured, dict):
                 self.metrics.update(measured)
         if self._token is not None:
-            try:
-                _STACK.reset(self._token)
-            except ValueError:  # pragma: no cover - ended on another thread/task
-                _STACK.set(tuple(s for s in _STACK.get() if s is not self))
+            # Drop ourselves rather than resetting the token. A token restores
+            # the whole stack as it was, so a span ended out of order would
+            # resurrect spans that already closed underneath it.
+            self._token = None
+            _STACK.set(tuple(s for s in _STACK.get() if s is not self))
         self._record()
         self._announce("<-", self.duration_ms)
         return self.duration_ms
@@ -162,7 +169,7 @@ class Span:
     def _announce(self, marker: str, duration_ms: float | None):
         if self.print_fn is None:
             return
-        indent = "\t" * self.depth
+        indent = "\t" * self.print_depth
         stamp = time.strftime("%H:%M:%S", time.localtime())
         if duration_ms is None:
             line = f"{indent}{marker} {self.name}  {stamp}"
@@ -217,7 +224,7 @@ class Span:
         }
         record = {
             "name": self.path,
-            "depth": self.path.count("/"),
+            "depth": self.depth,
             "track": self.track,
             "start": self.started_at,
             "dur_ms": self.duration_ms,

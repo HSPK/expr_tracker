@@ -180,6 +180,13 @@ Children inherit the handler, so one argument on the outermost span prints the
 whole tree. A child that passes its own `print_fn` takes over its subtree; pass
 `print_fn=lambda line: None` to silence one. A failed span ends with `!ValueError`.
 
+Indentation is relative to the span that started printing, not to absolute
+nesting depth, so turning printing on deep inside a call stack still gives you a
+tree rooted at the left margin. A new thread begins its own tree, because the
+nesting stack does not cross threads. Concurrent asyncio tasks share one handler
+and interleave their lines; each is still indented by its own depth, and the
+`->` and `<-` markers pair them up.
+
 Any callable taking one string works — `print`, `logger.info`, a list's `append`
 in tests. It is called on the thread that ran the span, and an exception in it is
 logged and swallowed.

@@ -136,6 +136,13 @@ from the default and each asyncio task gets its own copy, which is exactly the
 scoping spans need. (The run singleton went the other way, from `ContextVar` to a
 locked global, because there the goal was for worker threads to *share* it.)
 
+Closing a span filters itself out of the stack rather than resetting the token
+it got when it opened. A token restores the entire stack as it was, so with
+`start_span` — where spans need not close in the order they opened — an outer
+span closing first would be put back by its inner span's reset, and everything
+afterwards would nest under a span that had already ended. Filtering is exact,
+and at ten levels deep it still does not show up against the ~15 µs a span costs.
+
 ### A.6 Multiple processes
 
 The supported model is **rank 0 tracks**; there is no cross-rank merging.
