@@ -73,6 +73,7 @@ class Run:
         alert: Any = None,
         alert_rules: Sequence[Any] = (),
         alert_on_rank: int | None = 0,
+        backend_on_rank: int | None = 0,
         stream: str | None = None,
         **history_kwargs,
     ):
@@ -115,10 +116,18 @@ class Run:
             root=Path(dir or "./tracker/jsonl") / project / "artifacts"
         )
 
+        self.rank = current_rank()
         self.backends: dict[str, Any] = {}
         self.alerts = None
+        # Every rank would otherwise open the same remote run and interleave its
+        # steps into it, which is what the local rankN shards exist to prevent
+        remote = backend_on_rank is None or self.rank == backend_on_rank
+        # Rank 0 belongs in the group too when the other ranks are reporting
+        self._grouped = bool(stream) or bool(self.rank) or backend_on_rank is None
+        if not remote:
+            logger.debug(f"Rank {self.rank} keeps its history local, no backends")
         try:
-            for backend in dict.fromkeys(backends):
+            for backend in dict.fromkeys(backends) if remote else ():
                 if backend == "jsonl":
                     continue
                 try:
@@ -146,7 +155,6 @@ class Run:
                     kwargs=backend_kwargs.get(name, {}),
                 )
                 self._closers.append(instance.finish)
-            self.rank = current_rank()
             # Every rank would otherwise raise the same alert N times
             if alert_on_rank is not None and self.rank != alert_on_rank:
                 alert, alert_rules = {"enabled": False}, ()
@@ -158,18 +166,24 @@ class Run:
 
     @property
     def backend_run_name(self) -> str:
-        """A stream is an independent producer, so it gets its own backend run.
+        """A stream or a rank is an independent producer of steps, so each gets
+        its own backend run.
 
         Grouping ties them back together: both wandb and trackio understand
         ``group``, and neither can merge two step axes into one run.
         """
-        return f"{self.name}-{self.stream}" if self.stream else self.name
+        parts = [self.name]
+        if self.stream:
+            parts.append(self.stream)
+        if self.rank:
+            parts.append(f"rank{self.rank}")
+        return "-".join(parts)
 
     def _init_backend(
         self, name, instance, *, entity, dir, notes, tags, resume, kwargs
     ):
-        # A grouped run keeps the streams together in the backend UI
-        grouping = {"group": self.name} if self.stream else {}
+        # A grouped run keeps the streams and ranks together in the backend UI
+        grouping = {"group": self.name} if self._grouped else {}
         try:
             if name == "trackio":
                 # trackio.init has no entity/notes/tags/dir/id, so those ride along

@@ -350,3 +350,109 @@ def test_separate_processes_write_separate_shards(tmp_path):
         rows = read_history(run_dir / shard, -1)
         assert [r["_step"] for r in rows] == list(range(50))
         assert rows[7]["loss"] == 7 * 100 + rank
+
+
+# ------------------------------------------------------------------ backends
+
+
+class RecordingBackend:
+    """A stand-in for wandb/trackio that remembers how it was initialised."""
+
+    def __init__(self):
+        self.inits: list[dict] = []
+        self.logs: list[dict] = []
+
+    def init(self, **kwargs):
+        self.inits.append(kwargs)
+
+    def log(self, data, step=None, commit=None):
+        self.logs.append(data)
+
+    def finish(self):
+        pass
+
+
+def run_with(backend, tmp_path, name="job", **options):
+    return Run(
+        project="dist",
+        name=name,
+        dir=str(tmp_path),
+        backends=[backend],
+        resume="allow",
+        **options,
+    )
+
+
+def test_only_rank_zero_opens_a_remote_run(rank, tmp_path):
+    """Every rank opening the same remote run would interleave their steps."""
+    backend = RecordingBackend()
+    for value in (0, 1, 2, 3):
+        rank(value)
+        run = run_with(backend, tmp_path)
+        run.log({"loss": 1.0})
+        run.finish()
+    assert len(backend.inits) == 1
+    assert backend.inits[0]["id"] == "job"
+    assert len(backend.logs) == 1  # and only rank 0's metrics were forwarded
+
+
+def test_a_silenced_rank_still_writes_its_own_history(rank, tmp_path):
+    backend = RecordingBackend()
+    rank(2)
+    run = run_with(backend, tmp_path)
+    try:
+        run.log({"loss": 1.0})
+        assert run.backends == {}
+        assert read_history(run.history.log_dir, -1, stream=None)  # local file kept
+    finally:
+        run.finish()
+
+
+def test_the_reporting_rank_can_be_chosen(rank, tmp_path):
+    backend = RecordingBackend()
+    for value in (0, 2):
+        rank(value)
+        run = run_with(backend, tmp_path, backend_on_rank=2)
+        run.finish()
+    assert len(backend.inits) == 1
+    assert backend.inits[0]["id"] == "job-rank2"
+
+
+def test_every_rank_can_report_under_distinct_ids(rank, tmp_path):
+    """Opt in to per-rank runs and they must not collide the way ids did."""
+    backend = RecordingBackend()
+    for value in (0, 1, 2, 3):
+        rank(value)
+        run = run_with(backend, tmp_path, backend_on_rank=None)
+        run.finish()
+    ids = [call["id"] for call in backend.inits]
+    assert ids == ["job", "job-rank1", "job-rank2", "job-rank3"]
+    assert len(set(ids)) == len(ids)
+
+
+def test_per_rank_runs_are_grouped_including_rank_zero(rank, tmp_path):
+    backend = RecordingBackend()
+    for value in (0, 1):
+        rank(value)
+        run = run_with(backend, tmp_path, backend_on_rank=None)
+        run.finish()
+    assert [call["group"] for call in backend.inits] == ["job", "job"]
+
+
+def test_a_single_process_run_is_not_grouped(rank, tmp_path):
+    backend = RecordingBackend()
+    rank(None)
+    run = run_with(backend, tmp_path)
+    run.finish()
+    assert backend.inits[0].get("group") is None
+    assert backend.inits[0]["id"] == "job"
+
+
+def test_streams_and_ranks_both_reach_the_backend_name(rank, tmp_path):
+    backend = RecordingBackend()
+    rank(3)
+    run = run_with(backend, tmp_path, backend_on_rank=None, stream="data")
+    run.finish()
+    call = backend.inits[0]
+    assert call["id"] == "job-data-rank3"
+    assert call["group"] == "job" and call["job_type"] == "data"

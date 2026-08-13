@@ -26,6 +26,8 @@ et.init(
     stream: str | None = None,
     alert=None,
     alert_rules: Sequence = (),
+    alert_on_rank: int | None = 0,
+    backend_on_rank: int | None = 0,
     **history_options,
 ) -> Run
 ```
@@ -33,6 +35,10 @@ et.init(
 Starts a run and publishes it as the process-wide current run. `name` defaults to a
 timestamp. `dir` defaults to `./tracker/jsonl`. Extra keyword arguments are
 [history options](configuration.md#history-options).
+
+`alert_on_rank` and `backend_on_rank` pick which rank alerts and which opens the
+remote backend run; `None` means every rank. See
+[Distributed runs](../guide/distributed.md).
 
 Calling `init()` twice without `finish()` raises.
 

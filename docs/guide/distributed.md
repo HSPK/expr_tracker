@@ -50,6 +50,29 @@ its rules, and reports them through `info()`:
 et.info()["rank"]     # which rank this process was detected as
 ```
 
+## Remote backends
+
+wandb and trackio identify a run by id, and neither can merge two step axes into
+one run. If every rank opened the same id they would interleave their steps into
+it — exactly what the local shards exist to prevent. So only rank 0 opens a
+remote run by default:
+
+```python
+et.init(..., backends=["wandb"])                        # rank 0 reports (default)
+et.init(..., backends=["wandb"], backend_on_rank=2)     # rank 2 reports instead
+et.init(..., backends=["wandb"], backend_on_rank=None)  # every rank reports
+```
+
+A silenced rank still writes its full local history; it simply never calls the
+backend. When every rank does report, each gets its own run id and they are tied
+together with `group`, which both backends understand:
+
+| | id | group |
+| --- | --- | --- |
+| rank 0 | `sft-1` | `sft-1` |
+| rank 2 | `sft-1-rank2` | `sft-1` |
+| rank 2 of stream `data` | `sft-1-data-rank2` | `sft-1` |
+
 ## Typical setup
 
 ```python
@@ -64,5 +87,5 @@ et.init(
 )
 ```
 
-Every rank writes to `/shared/runs/llm/sft-<id>/`, each into its own shard, and only
-rank 0 pages you.
+Every rank writes to `/shared/runs/llm/sft-<id>/`, each into its own shard. Only
+rank 0 pages you, and only rank 0 opens the wandb run.
