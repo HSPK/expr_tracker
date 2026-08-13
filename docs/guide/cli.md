@@ -11,6 +11,7 @@ et history tracker/jsonl/demo/run-1
 et history tracker/jsonl/demo/run-1 -n 50 --metrics loss,lr
 et history tracker/jsonl/demo/run-1 --step-range 100:200 --format json
 et history tracker/jsonl/demo/run-1 -n -1 --format csv > run.csv
+et history runs/llm/sft-1 --stream data
 ```
 
 | Option | Default | Meaning |
@@ -18,6 +19,7 @@ et history tracker/jsonl/demo/run-1 -n -1 --format csv > run.csv
 | `-n` | 20 | number of steps, `-1` for all |
 | `--metrics` | all | comma-separated names |
 | `--step-range` | — | `start:end`, end exclusive; either side may be empty |
+| `--stream` | the unnamed producer | which [stream](streams.md) to read |
 | `--format` | `table` | `table`, `json` or `csv` |
 
 The argument is a run directory or a `metrics.jsonl` file.

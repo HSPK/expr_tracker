@@ -57,6 +57,39 @@ from expr_tracker.history import list_streams
 list_streams("runs/llm/sft-1")       # [None, "data"]
 ```
 
+```bash
+et history runs/llm/sft-1 --stream data
+et trace runs/llm/sft-1                   # every stream, one lane each
+```
+
+## A worked example
+
+`examples/multiprocess_pipeline.py` runs four data producers and four trainers as
+eight processes sharing one run, with a queue that lets a producer run at most
+`--staleness` batches ahead of the trainers. Each worker writes its own stream,
+so the exported trace gives each one a lane and the blocking spans show which
+side is the bottleneck:
+
+```bash
+# producers faster than trainers: they stall on a full queue
+uv run python examples/multiprocess_pipeline.py --produce-ms 10 --train-ms 40
+
+# trainers faster than producers: they starve waiting for batches
+uv run python examples/multiprocess_pipeline.py --produce-ms 40 --train-ms 10
+```
+
+```
+  producers  0.38s in produce
+    read             0.15s  37.9%
+    enqueue          0.13s  35.0%  <- backpressure
+    decode           0.09s  24.5%
+
+  trainers  1.05s in step
+    backward         0.59s  55.9%
+    forward          0.40s  38.1%
+    wait_for_batch   0.05s   4.9%  <- starvation
+```
+
 ## Alerts
 
 Each process alerts on what it can see, which is its own stream. That is usually

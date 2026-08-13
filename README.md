@@ -62,7 +62,17 @@ install command; it never crashes a run.
 | [Spans](https://hspk.github.io/expr_tracker/guide/spans/) | Time the parts of a step, and their parts. Each duration becomes a metric, so alerts and queries work on it unchanged; `et trace` exports the timeline for Perfetto. `print_fn` prints the tree live, and plugins attach CPU and GPU cost to each region. |
 | [Streams](https://hspk.github.io/expr_tracker/guide/streams/) | Independent producers — a data worker and a training loop — each with their own step cursor and file inside one run. |
 | [Distributed](https://hspk.github.io/expr_tracker/guide/distributed/) | Per-rank shards so concurrent appends cannot corrupt step order; only rank 0 alerts by default. |
-| [CLI](https://hspk.github.io/expr_tracker/guide/cli/) | `et history`, `et rules explain`, `et rules test`, `et alert`. |
+| [CLI](https://hspk.github.io/expr_tracker/guide/cli/) | `et history`, `et trace`, `et rules explain`, `et rules test`, `et alert`. |
+
+## Examples
+
+| | |
+| --- | --- |
+| [`multiprocess_pipeline.py`](examples/multiprocess_pipeline.py) | Four data producers and four trainers as eight processes in one run, with bounded staleness. Each worker gets its own stream and its own lane in the exported trace, and the blocking spans show which side is the bottleneck. |
+
+```bash
+uv run python examples/multiprocess_pipeline.py --produce-ms 10 --train-ms 40
+```
 
 ## wandb compatibility
 
@@ -105,6 +115,7 @@ uv run ruff format src tests
 | `test_expr_properties.py` | DSL properties: render round-trip stability, precedence, the whole `M` builder |
 | `test_trace.py` | Chrome Trace export: lane layout, stream and step selection, the CLI |
 | `test_spans.py` | nesting, aggregation, decorator and async forms, errors, thread and task isolation |
+| `test_examples.py` | the shipped examples run, and their backpressure claims hold |
 | `test_span_plugins.py` | `print_fn` output and indentation, the plugin protocol, failure isolation, CPU/GPU built-ins |
 | `test_streams.py` | stream naming and validation, isolation, resolution order, backend grouping, two-process runs |
 | `test_distributed.py` | rank shards, `alert_on_rank`, real multi-process runs |

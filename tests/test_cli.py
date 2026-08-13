@@ -37,6 +37,49 @@ def invoke(runner, *args):
 # ------------------------------------------------------------------ history
 
 
+@pytest.fixture
+def streamed_run_dir(tmp_path):
+    """A run written only by named streams, as separate processes produce."""
+    for stream, metric in (("data", "produce/rows"), ("train", "loss")):
+        store = HistoryStore()
+        store.init(
+            project="p",
+            name="s",
+            dir=str(tmp_path),
+            stream=stream,
+            max_open_seconds=None,
+        )
+        for step in range(4):
+            store.log({metric: float(step)})
+        store.finish()
+    return str(store.log_dir)
+
+
+def test_history_reads_a_named_stream(runner, streamed_run_dir):
+    output = invoke(runner, "history", streamed_run_dir, "--stream", "data", "-n", "-1")
+    assert "produce/rows" in output.splitlines()[0]
+    assert len(output.strip().splitlines()) == 6  # header, rule, four rows
+
+
+def test_history_streams_are_read_apart(runner, streamed_run_dir):
+    data = invoke(runner, "history", streamed_run_dir, "--stream", "data", "-n", "-1")
+    train = invoke(runner, "history", streamed_run_dir, "--stream", "train", "-n", "-1")
+    assert "loss" not in data and "produce/rows" not in train
+
+
+def test_history_default_stream_is_the_unnamed_one(runner, run_dir):
+    assert invoke(
+        runner, "history", run_dir, "--stream", "default", "-n", "2"
+    ) == invoke(runner, "history", run_dir, "-n", "2")
+
+
+def test_history_says_what_streams_exist(runner, streamed_run_dir):
+    """Asking for the unnamed producer of a stream-only run must be actionable."""
+    result = runner.invoke(cli.main, ["history", streamed_run_dir])
+    assert result.exit_code != 0
+    assert "metrics.data.jsonl" in str(result.exception)
+
+
 def test_history_table_is_the_default(runner, run_dir):
     output = invoke(runner, "history", run_dir, "-n", "3")
     lines = output.strip().splitlines()

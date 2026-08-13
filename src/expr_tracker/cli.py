@@ -37,15 +37,28 @@ def alert(msg: str, title: str, level: str, channels: tuple[str, ...]):
 @click.option("--metrics", default=None, help="Comma separated metric names")
 @click.option("--step-range", default=None, help="start:end (end exclusive)")
 @click.option(
+    "--stream",
+    default=None,
+    help="Which stream to read; the unnamed one by default.",
+)
+@click.option(
     "--format", "fmt", type=click.Choice(["table", "json", "csv"]), default="table"
 )
-def history(run: str, n: int, metrics: str | None, step_range: str | None, fmt: str):
+def history(
+    run: str,
+    n: int,
+    metrics: str | None,
+    step_range: str | None,
+    stream: str | None,
+    fmt: str,
+):
     """Print the recorded history of a run."""
     rows = read_history(
         run,
         n,
         metrics=metrics.split(",") if metrics else None,
         step_range=_parse_range(step_range),
+        stream=None if stream in (None, "default", "") else stream,
     )
     if fmt == "json":
         click.echo(json.dumps(rows, ensure_ascii=False, indent=2))
