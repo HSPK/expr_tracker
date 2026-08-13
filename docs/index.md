@@ -42,6 +42,7 @@ uv add "expr_tracker[all]"          # + wandb, trackio, lark, pandas, polars
 ## Next
 
 - [Getting started](getting-started.md) — a complete run, end to end.
+- [Examples](examples.md) — six runnable programs, all offline.
 - [Logging metrics](guide/logging.md) — commit semantics and the step model.
 - [Alerts](guide/alerts.md) — rules, channels and delivery policy.
 - [Design](design.md) — the data model and the invariants behind it.

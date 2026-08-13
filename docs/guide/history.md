@@ -30,6 +30,14 @@ et.history(-1, metrics=["eval/acc"], dropna=True)     # drop steps without it
 `dropna` drops a row when **all** selected metrics are missing, which is what you
 want for sparse eval metrics logged every N steps.
 
+`n` selects rows first and `dropna` filters them afterwards. Asking for the last
+4 rows of a metric logged every 10 steps therefore finds nothing — take every
+eval point and slice:
+
+```python
+et.history(-1, metrics=["eval/acc"], dropna=True)[-4:]   # the last 4 evals
+```
+
 ## Output types
 
 ```python

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "examples/**"   # docs/examples.md includes examples/README.md
       - "mkdocs.yml"
       - ".github/workflows/docs.yaml"
   workflow_dispatch:

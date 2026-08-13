@@ -85,12 +85,16 @@ et.get_run().step        # 1000 - the cursor picked up where it left off
 len(et.history(-1))      # 1000 - the old rows are still there
 ```
 
+This is unconditional: `resume` is passed on to wandb and trackio, but the local
+file always continues. Use a different name to start clean.
+
 A process that dies without `finish()` still leaves a complete, valid file: the open
 row is committed and the summary saved by an exit hook, and a torn trailing line is
 repaired on the next run.
 
 ## Next
 
+- [Examples](examples.md) — six runnable programs, all offline.
 - [Logging metrics](guide/logging.md) for commit semantics and out-of-order steps.
 - [Alerts](guide/alerts.md) to get notified instead of watching curves.
 - [CLI](guide/cli.md) to inspect runs without writing code.

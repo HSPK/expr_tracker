@@ -66,11 +66,20 @@ install command; it never crashes a run.
 
 ## Examples
 
+Every one runs offline, with no account and no network.
+
 | | |
 | --- | --- |
-| [`multiprocess_pipeline.py`](examples/multiprocess_pipeline.py) | Four data producers and four trainers as eight processes in one run, with bounded staleness. Each worker gets its own stream and its own lane in the exported trace, and the blocking spans show which side is the bottleneck. |
+| [`quickstart.py`](examples/quickstart.py) | The sixty-second tour: log a run, merge eval into the training step, read the history back while it is open and again afterwards. |
+| [`alert_rules.py`](examples/alert_rules.py) | Four rules against four faults — a loss spike, a non-finite loss, a stalled curve and a regression that must persist. `--fault none` fires nothing, which is the point. |
+| [`profile_step.py`](examples/profile_step.py) | Where a step goes. Nested spans become metrics, a plugin adds CPU cost, and the tree exports to Perfetto. |
+| [`early_stopping.py`](examples/early_stopping.py) | Querying your own history mid-run to decay the learning rate on a plateau and stop when it stops paying. |
+| [`checkpoints.py`](examples/checkpoints.py) | Checkpoints as versioned artifacts, deduplicated by content and fetched later by alias. |
+| [`multiprocess_pipeline.py`](examples/multiprocess_pipeline.py) | Four data producers and four trainers as eight processes in one run, with bounded staleness. Each worker gets its own stream and its own lane in the trace, and the blocking spans show which side is the bottleneck. |
 
 ```bash
+uv run python examples/quickstart.py
+uv run python examples/alert_rules.py --fault spike
 uv run python examples/multiprocess_pipeline.py --produce-ms 10 --train-ms 40
 ```
 

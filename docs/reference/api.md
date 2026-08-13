@@ -36,6 +36,10 @@ Starts a run and publishes it as the process-wide current run. `name` defaults t
 timestamp. `dir` defaults to `./tracker/jsonl`. Extra keyword arguments are
 [history options](configuration.md#history-options).
 
+`resume` is forwarded to wandb and trackio. The local history always continues an
+existing run directory, so re-running with the same project and name picks up the
+step cursor whatever `resume` says; use a new name to start clean.
+
 `alert_on_rank` and `backend_on_rank` pick which rank alerts and which opens the
 remote backend run; `None` means every rank. See
 [Distributed runs](../guide/distributed.md).
