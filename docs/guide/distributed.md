@@ -73,6 +73,12 @@ together with `group`, which both backends understand:
 | rank 2 | `sft-1-rank2` | `sft-1` |
 | rank 2 of stream `data` | `sft-1-data-rank2` | `sft-1` |
 
+`rank_aware` does not affect this. It decides whether the *local* file is
+sharded; the remote id is decided by `backend_on_rank`. They stay independent on
+purpose — `rank_aware=False` says you serialise the writes to one file yourself,
+and there is no equivalent lock between two processes' wandb clients, so a rank
+that reports still needs an id of its own.
+
 ## Typical setup
 
 ```python

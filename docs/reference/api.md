@@ -177,7 +177,7 @@ span.metrics                                    # what the plugins measured
 `<path>/duration_ms`, `<path>/count` and one key per plugin metric to the open
 row, and appends the full record to `spans.jsonl`.
 
-`print_fn(line)` announces the span's start and end, indented one tab per level.
+`print_fn(line)` announces the span's start and end, indented two spaces per level.
 `plugins` measure a resource across the span; both are inherited by child spans
 and default to the run's `span_print_fn` and `span_plugins`.
 

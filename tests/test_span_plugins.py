@@ -14,6 +14,7 @@ import expr_tracker as et
 from expr_tracker import plugins as pl
 from expr_tracker.history.naming import spans_filename
 from expr_tracker.plugins import CpuTime, GpuStats, TorchMemory, stop_samplers
+from expr_tracker.spans import INDENT
 
 
 @pytest.fixture
@@ -45,6 +46,11 @@ def lines():
     return []
 
 
+def depth_of(line):
+    """Nesting depth of a printed line, measured from its leading indent."""
+    return (len(line) - len(line.lstrip(" "))) // len(INDENT)
+
+
 def span_records(run_obj):
     path = run_obj.history.log_dir / spans_filename(None, True)
     if not path.exists():
@@ -71,8 +77,8 @@ def test_indents_one_tab_per_level(run, lines):
     run()
     with et.span("a", print_fn=lines.append), et.span("b"), et.span("c"):
         pass
-    assert [line.count("\t") for line in lines] == [0, 1, 2, 2, 1, 0]
-    assert lines[2].startswith("\t\t-> c")
+    assert [depth_of(line) for line in lines] == [0, 1, 2, 2, 1, 0]
+    assert lines[2].startswith(INDENT * 2 + "-> c")
 
 
 def test_indentation_is_relative_to_where_printing_started(run, lines):
@@ -85,8 +91,8 @@ def test_indentation_is_relative_to_where_printing_started(run, lines):
         et.span("leaf"),
     ):
         pass
-    assert [line.count("\t") for line in lines] == [0, 1, 1, 0]
-    assert lines[0] == lines[0].lstrip("\t")
+    assert [depth_of(line) for line in lines] == [0, 1, 1, 0]
+    assert lines[0] == lines[0].lstrip(" ")
 
 
 def test_an_overriding_child_roots_its_own_indentation(run, lines):
@@ -99,7 +105,7 @@ def test_an_overriding_child_roots_its_own_indentation(run, lines):
         et.span("d"),
     ):
         pass
-    assert [line.count("\t") for line in other] == [0, 1, 1, 0]
+    assert [depth_of(line) for line in other] == [0, 1, 1, 0]
 
 
 def test_the_run_default_still_indents_the_whole_tree(run, lines):
@@ -107,7 +113,7 @@ def test_the_run_default_still_indents_the_whole_tree(run, lines):
     run(span_print_fn=lines.append)
     with et.span("a"), et.span("b"), et.span("c"):
         pass
-    assert [line.count("\t") for line in lines] == [0, 1, 2, 2, 1, 0]
+    assert [depth_of(line) for line in lines] == [0, 1, 2, 2, 1, 0]
 
 
 def test_indentation_keeps_up_with_deep_nesting(run, lines):
@@ -117,7 +123,7 @@ def test_indentation_keeps_up_with_deep_nesting(run, lines):
     spans += [et.span(f"s{i}").__enter__() for i in range(1, depth)]
     for sp in reversed(spans):
         sp.end()
-    assert [line.count("\t") for line in lines[:depth]] == list(range(depth))
+    assert [depth_of(line) for line in lines[:depth]] == list(range(depth))
 
 
 def test_a_new_thread_starts_a_fresh_tree(run, lines):
@@ -133,7 +139,7 @@ def test_a_new_thread_starts_a_fresh_tree(run, lines):
         thread = threading.Thread(target=work)
         thread.start()
         thread.join()
-    assert [line.count("\t") for line in inner] == [0, 0]
+    assert [depth_of(line) for line in inner] == [0, 0]
 
 
 def test_concurrent_tasks_are_each_indented_by_their_own_depth(run, lines):
@@ -151,7 +157,7 @@ def test_concurrent_tasks_are_each_indented_by_their_own_depth(run, lines):
     by_name = {}
     for line in lines:
         parts = line.split()
-        by_name.setdefault(parts[1], []).append(line.count("\t"))
+        by_name.setdefault(parts[1], []).append(depth_of(line))
     assert by_name["gather"] == [0, 0]
     assert by_name["a"] == [1, 1] and by_name["b"] == [1, 1]
     assert by_name["sub"] == [2, 2, 2, 2]
@@ -165,7 +171,7 @@ def test_a_recursive_span_indents_by_recursion_depth(run, lines):
         return n if n < 2 else fib(n - 1) + fib(n - 2)
 
     fib(2)
-    assert [line.count("\t") for line in lines] == [0, 1, 1, 1, 1, 0]
+    assert [depth_of(line) for line in lines] == [0, 1, 1, 1, 1, 0]
 
 
 def test_a_span_ended_out_of_order_does_not_resurrect_itself(run):
@@ -192,7 +198,7 @@ def test_out_of_order_ends_keep_the_indentation_honest(run, lines):
     inner.end()
     later = et.start_span("later", print_fn=lines.append)
     later.end()
-    assert [line.count("\t") for line in lines] == [0, 1, 0, 1, 0, 0]
+    assert [depth_of(line) for line in lines] == [0, 1, 0, 1, 0, 0]
 
 
 def test_a_slashed_name_does_not_fake_a_level(run, lines):
@@ -202,9 +208,36 @@ def test_a_slashed_name_does_not_fake_a_level(run, lines):
         pass
     et.log({"loss": 1.0})
     et.finish()
-    assert [line.count("\t") for line in lines] == [0, 1, 1, 0]
+    assert [depth_of(line) for line in lines] == [0, 1, 1, 0]
     records = {rec["name"]: rec["depth"] for rec in span_records(r)}
     assert records == {"data/load": 0, "data/load/decode": 1}
+
+
+def test_the_indent_survives_a_log_prefix(run, lines):
+    """A tab is measured from the start of the line, so behind a logger prefix
+    the first level collapses to whatever is left of the tab stop. Spaces do
+    not care where the line begins."""
+    run()
+    with et.span("a", print_fn=lines.append), et.span("b"), et.span("c"):
+        pass
+    assert "\t" not in "".join(lines)
+    for prefix in ("", "x" * 11, "x" * 71, "x" * 72):
+        columns = [_visual_indent(prefix + line) for line in lines]
+        relative = [column - len(prefix) for column in columns]
+        assert relative == [0, 2, 4, 4, 2, 0], prefix
+
+
+def _visual_indent(line, tabsize=8):
+    """Where the marker lands once a terminal has expanded the tabs."""
+    column = 0
+    for index, char in enumerate(line):
+        if char == "\t":
+            column += tabsize - (column % tabsize)
+        elif line.startswith(("-> ", "<- "), index):
+            return column
+        else:
+            column += 1
+    return column
 
 
 def test_children_inherit_the_handler(run, lines):
@@ -351,7 +384,7 @@ def test_sibling_spans_restart_the_indentation(run, lines):
             pass
         with et.span("two"):
             pass
-    assert [line.count("\t") for line in lines] == [0, 1, 1, 1, 1, 0]
+    assert [depth_of(line) for line in lines] == [0, 1, 1, 1, 1, 0]
 
 
 # --------------------------------------------------------------------------- #

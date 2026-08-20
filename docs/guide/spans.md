@@ -158,7 +158,7 @@ await asyncio.gather(work("a"), work("b"))
 
 ## Printing a span as it runs
 
-Pass `print_fn` and the span announces itself, indented one tab per level:
+Pass `print_fn` and the span announces itself, indented two spaces per level:
 
 ```python
 with et.span("step", print_fn=print):
@@ -169,10 +169,10 @@ with et.span("step", print_fn=print):
 
 ```
 -> step  16:41:38
-	-> forward  16:41:38
-		-> attention  16:41:38
-		<- attention  16:41:38  3.074ms
-	<- forward  16:41:38  5.481ms
+  -> forward  16:41:38
+    -> attention  16:41:38
+    <- attention  16:41:38  3.074ms
+  <- forward  16:41:38  5.481ms
 <- step  16:41:38  9.641ms
 ```
 
@@ -188,7 +188,9 @@ and interleave their lines; each is still indented by its own depth, and the
 `->` and `<-` markers pair them up.
 
 Any callable taking one string works — `print`, `logger.info`, a list's `append`
-in tests. It is called on the thread that ran the span, and an exception in it is
+in tests. The indent is spaces rather than a tab so that it survives a log
+prefix: a terminal measures tab stops from the start of the line, so behind
+`... | INFO | ` the first level would collapse to whatever is left of the stop. It is called on the thread that ran the span, and an exception in it is
 logged and swallowed.
 
 Set it for the whole run instead of per span with `span_print_fn`:

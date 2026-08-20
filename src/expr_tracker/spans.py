@@ -26,6 +26,10 @@ _STACK: ContextVar[tuple[Span, ...]] = ContextVar("et_span_stack", default=())
 DURATION_SUFFIX = "duration_ms"
 COUNT_SUFFIX = "count"
 RESERVED_METRICS = frozenset({DURATION_SUFFIX, COUNT_SUFFIX})
+# Spaces, not a tab: a terminal measures tab stops from the start of the line, so
+# behind a log prefix the first level collapses to whatever is left of the stop.
+# Two spaces render the same width wherever the line begins.
+INDENT = "  "
 
 
 _WARNED: set[tuple[str, str, str]] = set()
@@ -180,7 +184,7 @@ class Span:
     def _announce(self, marker: str, duration_ms: float | None):
         if self.print_fn is None:
             return
-        indent = "\t" * self.print_depth
+        indent = INDENT * self.print_depth
         stamp = time.strftime("%H:%M:%S", time.localtime())
         if duration_ms is None:
             line = f"{indent}{marker} {self.name}  {stamp}"

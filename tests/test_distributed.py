@@ -456,3 +456,25 @@ def test_streams_and_ranks_both_reach_the_backend_name(rank, tmp_path):
     call = backend.inits[0]
     assert call["id"] == "job-data-rank3"
     assert call["group"] == "job" and call["job_type"] == "data"
+
+
+def test_the_backend_id_does_not_follow_rank_aware(rank, tmp_path):
+    """Local sharding and the remote id are separate concerns.
+
+    rank_aware=False promises you serialise writes to one file. Two processes'
+    wandb clients have no such lock, so a reporting rank still needs its own id.
+    """
+    backend = RecordingBackend()
+    rank(2)
+    run = Run(
+        project="dist",
+        name="job",
+        dir=str(tmp_path),
+        backends=[backend],
+        backend_on_rank=None,
+        rank_aware=False,
+    )
+    run.log({"loss": 1.0})
+    run.finish()
+    assert backend.inits[0]["id"] == "job-rank2"
+    assert run.history.log_fp.name == "metrics.jsonl"  # unsharded, as asked

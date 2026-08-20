@@ -342,7 +342,7 @@ def test_printing_spans_is_opt_in(profile_step, tmp_path, capsys):
     assert "-> step" not in capsys.readouterr().out
     profile_step.main([*argv(**{"--steps": 2, "--dir": tmp_path}), "--print-spans"])
     printed = capsys.readouterr().out
-    assert "-> step" in printed and "\t-> data" in printed
+    assert "-> step" in printed and "\n  -> data" in printed
 
 
 # ------------------------------------------------------------------ early_stopping
