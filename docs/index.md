@@ -36,7 +36,7 @@ or an unserialisable value degrades with a warning; none of them can stop traini
 
 ```bash
 uv add expr_tracker                 # local-first, three small dependencies
-uv add "expr_tracker[all]"          # + wandb, trackio, lark, pandas, polars
+uv add "expr_tracker[all]"          # + wandb, trackio, pandas, polars, gpu
 ```
 
 ## Next

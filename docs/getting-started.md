@@ -12,9 +12,12 @@ Only `click`, `loguru` and `pydantic` are required. Everything else is an extra:
 | --- | --- |
 | `wandb` | mirror metrics to Weights & Biases |
 | `trackio` | mirror metrics to trackio |
-| `lark` | Feishu/Lark alert channel |
 | `pandas` / `polars` | `history(output_type=...)` frames |
+| `gpu` | `GpuStats` span plugin, via NVML |
 | `all` | all of the above |
+
+Alert channels need nothing: every one of them, Lark included, is built on the
+standard library.
 
 A missing extra is reported with the exact install command; it never crashes a run.
 

@@ -42,7 +42,6 @@ et.history(-1, output_type="pd")  # everything, as a DataFrame
 uv add expr_tracker                 # local-first: click, loguru, pydantic only
 uv add "expr_tracker[wandb]"        # mirror to Weights & Biases
 uv add "expr_tracker[trackio]"      # mirror to trackio
-uv add "expr_tracker[lark]"         # Feishu/Lark alert channel
 uv add "expr_tracker[pandas]"       # history(output_type="pandas")
 uv add "expr_tracker[all]"          # everything
 ```
@@ -130,7 +129,7 @@ uv run ruff format src tests
 | `test_distributed.py` | rank shards, `alert_on_rank`, real multi-process runs |
 | `test_wandb.py` | real wandb in offline mode: parameter mapping, step alignment, artifacts |
 | `test_trackio.py` | trackio contract, resume mapping, real end-to-end |
-| `test_lark_live.py` | Lark channel; real delivery when `ET_LARK_TEST_WEBHOOK` is set |
+| `test_lark.py` | Lark card construction; real delivery when `ET_LARK_TEST_WEBHOOK` is set |
 | `test_stress.py` (`slow`) | 100k-row writes, concurrency, cache thrash, write-failure recovery |
 | `test_benchmark.py` (`benchmark`) | throughput, tail latency, query cost, memory stability |
 

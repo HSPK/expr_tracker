@@ -75,27 +75,30 @@ def test_custom_headers_are_forwarded(captured):
     assert captured[0]["headers"] == {"X-Token": "t"}
 
 
-def test_lark_uses_error_card_for_errors(monkeypatch):
-    calls: list = []
+def test_lark_sends_an_interactive_card(captured):
+    build("lark").send(message(level="info"))
+    payload = captured[0]["payload"]
+    assert payload["msg_type"] == "interactive"
+    assert payload["card"]["header"]["title"]["content"].endswith("Title")
 
-    class FakeWebhook:
-        def post_success_card(self, **kwargs):
-            calls.append(("success", kwargs))
 
-        def post_error_card(self, **kwargs):
-            calls.append(("error", kwargs))
+@pytest.mark.parametrize(
+    ("level", "template"),
+    [("info", "green"), ("warning", "green"), ("error", "red"), ("critical", "red")],
+)
+def test_the_lark_card_colour_follows_the_level(captured, level, template):
+    build("lark").send(message(level=level))
+    assert captured[0]["payload"]["card"]["header"]["template"] == template
 
-    class FakeLark:
-        def __init__(self, **kwargs):
-            self.webhook = FakeWebhook()
 
-    backend = build("lark")
-    monkeypatch.setattr(backend, "_lark", lambda: FakeLark())
-    backend.send(message(level="info"))
-    backend.send(message(level="error", traceback="tb"))
-    assert [kind for kind, _ in calls] == ["success", "error"]
-    assert calls[1][1]["traceback"] == "tb"
-    assert calls[0][1]["title"].endswith("Title")  # level emoji prefix
+def test_a_lark_card_carries_the_traceback(captured):
+    build("lark").send(message(level="error", traceback="tb here"))
+    blocks = [
+        e["content"]
+        for e in captured[0]["payload"]["card"]["elements"]
+        if e["tag"] == "markdown"
+    ]
+    assert any("tb here" in block for block in blocks)
 
 
 def test_callable_backend_requires_handler():

@@ -6,7 +6,7 @@ import json
 import smtplib
 from email.message import EmailMessage
 
-from ..models import AlertLevel, AlertMessage, ChannelConfig
+from ..models import AlertLevel, AlertMessage
 from .base import (
     AlertBackend,
     SendError,
@@ -16,6 +16,7 @@ from .base import (
     render_html,
     render_text,
 )
+from .cards import build_card, card_payload
 
 LEVEL_EMOJI = {
     AlertLevel.DEBUG: "🔍",
@@ -56,13 +57,22 @@ class UrlBackend(AlertBackend):
             self.url, payload, self.timeout, self.config.options.get("headers")
         )
 
-    def post_checked(self, payload: dict):
-        """DingTalk and WeCom report failures via errcode inside an HTTP 200 body."""
-        body = self.post(payload)
+    def post_reply(self, payload: dict) -> dict:
+        """Post, and decode the reply these APIs put their verdict in.
+
+        An unreadable body is not a failure: the POST itself succeeded, and some
+        proxies answer 200 with nothing at all.
+        """
+        body = self.post(payload)  # outside the try: a failed POST must raise
         try:
             result = json.loads(body)
         except Exception:
-            return
+            return {}
+        return result if isinstance(result, dict) else {}
+
+    def post_checked(self, payload: dict):
+        """DingTalk and WeCom report failures via errcode inside an HTTP 200 body."""
+        result = self.post_reply(payload)
         code = result.get("errcode")
         if code:
             raise SendError(
@@ -73,45 +83,31 @@ class UrlBackend(AlertBackend):
 
 
 class LarkBackend(UrlBackend):
+    """Feishu/Lark bot webhook, as an interactive card."""
+
     type = "lark"
 
-    def __init__(self, config: ChannelConfig):
-        super().__init__(config)
-        self._client = None
-
-    def _lark(self):
-        if self._client is None:
-            from slark import Lark
-
-            options = {k: v for k, v in self.config.options.items() if k != "headers"}
-            self._client = Lark(webhook=self.url, **options)
-        return self._client
+    # Lark answers HTTP 200 and puts the verdict in the body
+    RETRYABLE_CODES = frozenset({9499, 11232, 19024})
 
     def send(self, message: AlertMessage):
         title = f"{LEVEL_EMOJI.get(message.level, '')} {message.title}".strip()
-        text = render_text(message)
-        subtitle = message.subtitle
-        try:
-            client = self._lark()
-        except ImportError as e:  # pragma: no cover - optional extra
+        card = build_card(
+            render_text(message),
+            title,
+            message.subtitle,
+            message.traceback,
+            failed=message.level >= AlertLevel.ERROR,
+        )
+        result = self.post_reply(card_payload(card))
+        # Success is code 0, or StatusCode 0 from the older bot endpoint
+        code = result.get("code") or result.get("StatusCode") or 0
+        if code:
+            detail = result.get("msg") or result.get("StatusMessage")
             raise SendError(
-                f'The lark channel needs slark: pip install "expr_tracker[lark]" ({e})',
-                retryable=False,
-            ) from e
-        try:
-            if message.level >= AlertLevel.ERROR:
-                client.webhook.post_error_card(
-                    msg=text,
-                    traceback=message.traceback or "",
-                    title=title,
-                    subtitle=subtitle,
-                )
-            else:
-                client.webhook.post_success_card(
-                    msg=text, title=title, subtitle=subtitle
-                )
-        except Exception as e:
-            raise SendError(f"Lark webhook failed: {e}") from e
+                f"Lark rejected the message: code={code} msg={detail!r}",
+                retryable=code in self.RETRYABLE_CODES,
+            )
 
 
 class SlackBackend(UrlBackend):

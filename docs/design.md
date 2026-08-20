@@ -375,9 +375,12 @@ AlertRule(name, condition, level="warning", title=None,
   timeout.
 - **Only send failures are swallowed**; configuration errors raise at configuration
   time.
-- **Backends**: `lark` (via slark, client reused), `slack`, `dingtalk`, `wecom` and
-  `webhook` (a generic template) use stdlib `urllib`; `email` uses stdlib `smtplib` —
-  **no new hard dependencies**. `register_backend()` extends the set.
+- **Backends**: `lark`, `slack`, `dingtalk`, `wecom` and `webhook` (a generic
+  template) use stdlib `urllib`; `email` uses stdlib `smtplib` — **every channel is
+  dependency-free**. `register_backend()` extends the set. The Lark card layout is
+  built as plain dicts in `backends/cards.py` rather than pulled in with a client
+  library: it is one JSON body, and a whole HTTP stack to shape it was not a trade
+  worth making.
 - **Configuration precedence**: `init(alert=)` > `configure_alert()` >
   `ET_ALERT_CONFIG` file > environment (`ET_LARK_WEBHOOK_URL`, legacy `WEBHOOK_URL`)
   > defaults.

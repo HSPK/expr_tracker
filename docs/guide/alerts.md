@@ -90,8 +90,8 @@ et.alert(title="done", text="training finished", level="info", channels=["oncall
 ```
 
 Built-in types: `lark`, `slack`, `dingtalk`, `wecom`, `webhook` (a generic JSON
-template), `email`, `callable`. All but `lark` use only the standard library. Add
-your own with `register_backend()`.
+template), `email`, `callable`. All of them use only the standard library, so no
+channel needs an extra. Add your own with `register_backend()`.
 
 ### Email
 

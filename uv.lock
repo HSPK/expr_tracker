@@ -53,19 +53,6 @@ wheels = [
 ]
 
 [[package]]
-name = "arrow"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "python-dateutil" },
-    { name = "types-python-dateutil" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2e/00/0f6e8fcdb23ea632c866620cc872729ff43ed91d284c866b515c6342b173/arrow-1.3.0.tar.gz", hash = "sha256:d4540617648cb5f895730f1ad8c82a65f2dad0166f57b75f3ca54759c4d67a85", size = 131960, upload-time = "2023-09-30T22:11:18.25Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/ed/e97229a566617f2ae958a6b13e7cc0f585470eac730a73e9e82c32a3cdd2/arrow-1.3.0-py3-none-any.whl", hash = "sha256:c728b120ebc00eb84e01882a6f5e7927a53960aa990ce7dd2b10f39005a67f80", size = 66419, upload-time = "2023-09-30T22:11:16.072Z" },
-]
-
-[[package]]
 name = "asttokens"
 version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -483,15 +470,11 @@ all = [
     { name = "nvidia-ml-py" },
     { name = "pandas" },
     { name = "polars" },
-    { name = "slark" },
     { name = "trackio" },
     { name = "wandb" },
 ]
 gpu = [
     { name = "nvidia-ml-py" },
-]
-lark = [
-    { name = "slark" },
 ]
 pandas = [
     { name = "pandas" },
@@ -515,7 +498,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "slark" },
     { name = "trackio" },
     { name = "wandb" },
 ]
@@ -535,14 +517,12 @@ requires-dist = [
     { name = "polars", marker = "extra == 'all'", specifier = ">=0.20" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=0.20" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "slark", marker = "extra == 'all'", specifier = ">=0.1.28" },
-    { name = "slark", marker = "extra == 'lark'", specifier = ">=0.1.28" },
     { name = "trackio", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "trackio", marker = "extra == 'trackio'", specifier = ">=0.4.0" },
     { name = "wandb", marker = "extra == 'all'", specifier = ">=0.21.0" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.21.0" },
 ]
-provides-extras = ["all", "gpu", "lark", "pandas", "polars", "trackio", "wandb"]
+provides-extras = ["all", "gpu", "pandas", "polars", "trackio", "wandb"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -552,7 +532,6 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.16.1" },
-    { name = "slark", specifier = ">=0.1.28" },
     { name = "trackio", specifier = ">=0.4.0" },
     { name = "wandb", specifier = ">=0.21.0" },
 ]
@@ -2004,18 +1983,6 @@ wheels = [
 ]
 
 [[package]]
-name = "requests-toolbelt"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/61/d7545dafb7ac2230c70d38d31cbfe4cc64f7144dc41f6e4e4b78ecd9f5bb/requests-toolbelt-1.0.0.tar.gz", hash = "sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6", size = 206888, upload-time = "2023-05-01T04:11:33.229Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/51/d4db610ef29373b879047326cbf6fa98b6c1969d6f6dc423279de2b1be2c/requests_toolbelt-1.0.0-py2.py3-none-any.whl", hash = "sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06", size = 54481, upload-time = "2023-05-01T04:11:28.427Z" },
-]
-
-[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2082,24 +2049,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
-]
-
-[[package]]
-name = "slark"
-version = "0.1.28"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "arrow" },
-    { name = "httpx" },
-    { name = "loguru" },
-    { name = "pandas" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "requests-toolbelt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/6c/1632d06e19f3039c5fe4e8310056cf2cfaf4e2812b6ffe0176acefb8dca1/slark-0.1.28.tar.gz", hash = "sha256:f1f08bf5f82cbfadc0752b2339fb39c0c35faa834da4191e6c8e1ddca8ea49b5", size = 103331, upload-time = "2025-08-06T10:50:40.126Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d6/35/3d38da087da91451617012b3303ade17d271f48972f01fae293dd96418b2/slark-0.1.28-py3-none-any.whl", hash = "sha256:5c7ac2bc48192acfbf3dd691c9de48c47032beb4cfa072bad5115e0b37d9a9b7", size = 155638, upload-time = "2025-08-06T10:50:38.056Z" },
 ]
 
 [[package]]
@@ -2266,15 +2215,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ae/40/4a3db7990d1f62a53182aa96eaef57aeb2886a27f90a195bc66713565d31/typer-0.27.1.tar.gz", hash = "sha256:a79bef8469a79c45498e7b814ecf8d603cc7644e9acbd9e19cac0334240b18df", size = 203994, upload-time = "2026-08-03T14:41:03.438Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/89/9518bc0c3929bee36b3a4a8e3daddd6e03f92f9961c66d4983b837160543/typer-0.27.1-py3-none-any.whl", hash = "sha256:53150287edd11baeb4e4722c8e394fcdf8181c0ae89485cba8d25c778d5edd56", size = 122874, upload-time = "2026-08-03T14:41:04.391Z" },
-]
-
-[[package]]
-name = "types-python-dateutil"
-version = "2.9.0.20250708"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/c9/95/6bdde7607da2e1e99ec1c1672a759d42f26644bbacf939916e086db34870/types_python_dateutil-2.9.0.20250708.tar.gz", hash = "sha256:ccdbd75dab2d6c9696c350579f34cffe2c281e4c5f27a585b2a2438dd1d5c8ab", size = 15834, upload-time = "2025-07-08T03:14:03.382Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/52/43e70a8e57fefb172c22a21000b03ebcc15e47e97f5cb8495b9c2832efb4/types_python_dateutil-2.9.0.20250708-py3-none-any.whl", hash = "sha256:4d6d0cc1cc4d24a2dc3816024e502564094497b713f7befda4d5bc7a8e3fd21f", size = 17724, upload-time = "2025-07-08T03:14:02.593Z" },
 ]
 
 [[package]]
