@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
+DEFAULT_ROOT = "./tracker/jsonl"
 STREAM_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 RANK_PATTERN = re.compile(r"rank\d+")
 
@@ -72,3 +74,37 @@ def parse_stream(filename: str) -> str | None:
     if parts and RANK_PATTERN.fullmatch(parts[-1]):
         parts = parts[:-1]
     return parts[0] if parts else None
+
+
+def resolve_log_dir(
+    project: str, name: str, dir: str | None = None, run_dir: str | None = None
+) -> Path:
+    """Where this run's files go.
+
+    ``dir`` is a root holding many projects, so a run lands in
+    ``<dir>/<project>/<name>``. That layout is what lets artifacts be shared and
+    deduplicated across a project's runs, and what lets a resume find its files
+    from the project and name alone. ``run_dir`` opts out of it and names the
+    directory outright, for when something else already chose the path.
+    """
+    if run_dir is not None:
+        if dir is not None:
+            raise ValueError(
+                "Pass either dir (a root, giving <dir>/<project>/<name>) or "
+                "run_dir (this run's directory), not both"
+            )
+        return Path(run_dir)
+    return Path(dir or DEFAULT_ROOT) / project / name
+
+
+def resolve_artifact_root(
+    project: str, dir: str | None = None, run_dir: str | None = None
+) -> Path:
+    """Where artifacts live: beside the project's runs, or inside a lone run.
+
+    A project-level store is what makes deduplication across runs possible, so
+    ``run_dir`` gives up that sharing in exchange for a self-contained directory.
+    """
+    if run_dir is not None:
+        return Path(run_dir) / "artifacts"
+    return Path(dir or DEFAULT_ROOT) / project / "artifacts"

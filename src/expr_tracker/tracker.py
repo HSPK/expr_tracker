@@ -23,6 +23,7 @@ def init(
     name: str | None = None,
     entity: str | None = None,
     dir: str | None = None,
+    run_dir: str | None = None,
     notes: str | None = None,
     tags: list[str] | None = None,
     resume: bool | Literal["allow", "never", "must", "auto"] | None = "allow",
@@ -36,6 +37,10 @@ def init(
 ) -> Run:
     """Initialise the tracker. Local jsonl history is always on, whatever ``backends``.
 
+    ``dir`` is a root holding many projects, so the run lands in
+    ``<dir>/<project>/<name>``. Pass ``run_dir`` instead to name the directory
+    outright.
+
     Extra keyword arguments are forwarded to the history store (``cache_bytes``,
     ``alert_window``, ``max_open_seconds``, ``step_policy``, ``buffer_size``, ...).
     """
@@ -48,6 +53,7 @@ def init(
             name=name,
             entity=entity,
             dir=dir,
+            run_dir=run_dir,
             notes=notes,
             tags=tags,
             resume=resume,

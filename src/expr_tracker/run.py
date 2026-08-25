@@ -10,14 +10,13 @@ import os
 import threading
 import time
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any, Literal
 
 from loguru import logger
 
 from .artifacts import Artifact, ArtifactStore, coerce_artifact
 from .history import HistoryStore, current_rank, resolve_commit
-from .history.naming import sidecar_filename
+from .history.naming import resolve_artifact_root, sidecar_filename
 from .summary import Summary
 
 _lock = threading.RLock()
@@ -63,6 +62,7 @@ class Run:
         name: str | None = None,
         entity: str | None = None,
         dir: str | None = None,
+        run_dir: str | None = None,
         notes: str | None = None,
         tags: list[str] | None = None,
         resume: bool | str | None = "allow",
@@ -97,6 +97,7 @@ class Run:
             name=name,
             config=self.config or None,
             dir=dir,
+            run_dir=run_dir,
             print_to_screen=print_to_screen,
             on_commit=self._on_commit,
             stream=stream,
@@ -113,7 +114,7 @@ class Run:
         atexit.register(self._save_summary_at_exit)
         self._closers.append(lambda: atexit.unregister(self._save_summary_at_exit))
         self.artifacts = ArtifactStore(
-            root=Path(dir or "./tracker/jsonl") / project / "artifacts"
+            root=resolve_artifact_root(project, dir, run_dir)
         )
 
         self.rank = current_rank()

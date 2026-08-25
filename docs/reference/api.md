@@ -16,6 +16,7 @@ et.init(
     name: str | None = None,
     entity: str | None = None,
     dir: str | None = None,
+    run_dir: str | None = None,
     notes: str | None = None,
     tags: list[str] | None = None,
     resume: bool | str | None = "allow",
@@ -33,8 +34,14 @@ et.init(
 ```
 
 Starts a run and publishes it as the process-wide current run. `name` defaults to a
-timestamp. `dir` defaults to `./tracker/jsonl`. Extra keyword arguments are
+timestamp. Extra keyword arguments are
 [history options](configuration.md#history-options).
+
+`dir` is a root and defaults to `./tracker/jsonl`, so the run lands in
+`<dir>/<project>/<name>` and artifacts in `<dir>/<project>/artifacts`. `run_dir`
+names this run's directory outright, putting its artifacts in
+`<run_dir>/artifacts`; passing both is an error. The resolved path is logged at
+`init()` and available as `Run.dir`.
 
 `resume` is forwarded to wandb and trackio. The local history always continues an
 existing run directory, so re-running with the same project and name picks up the

@@ -27,6 +27,7 @@ from .codec import RESERVED_KEYS, RecordCodec, encode_line
 from .frame import project, to_output
 from .naming import (
     metrics_filename,
+    resolve_log_dir,
     sidecar_filename,
     spans_filename,
     validate_stream,
@@ -184,6 +185,7 @@ class HistoryStore:
         name: str | None = None,
         config: dict | None = None,
         dir: str | None = None,
+        run_dir: str | None = None,
         on_commit: Callable[[dict], None] | None = None,
         **options,
     ) -> HistoryStore:
@@ -193,7 +195,7 @@ class HistoryStore:
             name = time.strftime("run-%Y%m%d-%H%M%S")
             logger.warning(f"No run name provided, using generated name: {name}")
         self.project, self.name = project, name
-        self.log_dir = Path(dir or "./tracker/jsonl") / project / name
+        self.log_dir = resolve_log_dir(project, name, dir, run_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.stream = opts.stream
         self.config_fp = self.log_dir / sidecar_filename("config", opts.stream, "json")
@@ -221,6 +223,10 @@ class HistoryStore:
         self._resume(opts.alert_window)
         self._write_config(config)
         self._register_atexit()
+        # Say where the files went: dir is a root, so the run is two levels below
+        # what the caller passed, and guessing that is nobody's idea of fun
+        resumed = f", resuming at step {self._next_step}" if self._next_step else ""
+        logger.info(f"Run {self.name!r} -> {self.log_dir}{resumed}")
         return self
 
     def _close_previous(self):

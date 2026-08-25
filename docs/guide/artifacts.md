@@ -33,6 +33,17 @@ assert b.version == 0                          # same bytes, same version
 et.use_artifact("model:best").version == 0
 ```
 
+## Where they live
+
+The store sits at `<dir>/<project>/artifacts`, beside the project's runs rather
+than inside any one of them. That is what makes sharing and deduplication
+possible: a later run asking for `model:best` finds what an earlier one logged.
+
+Naming a run's directory with `run_dir` moves the store to
+`<run_dir>/artifacts`. The run becomes self-contained, and gives up sharing with
+the project's other runs — nothing dedupes against them, and `use_artifact`
+cannot see them.
+
 ## Storage modes
 
 ```python

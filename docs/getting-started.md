@@ -48,15 +48,34 @@ et.finish()
 This writes:
 
 ```
-./tracker/jsonl/mnist/baseline/
-├── metrics.jsonl      # one JSON object per step
-├── metrics.meta.json  # index sidecar, for fast resume and seeks
-├── config.json
-├── summary.json
-└── artifacts.jsonl    # lineage: what this run produced and consumed
+./tracker/jsonl/            # the root, from dir=
+└── mnist/                  # the project
+    ├── baseline/           # this run
+    │   ├── metrics.jsonl      # one JSON object per step
+    │   ├── metrics.meta.json  # index sidecar, for fast resume and seeks
+    │   ├── config.json
+    │   ├── summary.json
+    │   └── artifacts.jsonl    # lineage: what this run produced and consumed
+    └── artifacts/          # shared by every run of the project
 ```
 
-Change the location with `et.init(dir="/data/runs")`.
+`dir` is a **root**, so a run lands in `<dir>/<project>/<name>`. That is what
+lets a project's runs share and deduplicate artifacts, and what lets a resume
+find its files from the project and name alone. The path is logged at `init()`,
+and `et.get_run().dir` returns it.
+
+```python
+et.init(project="mnist", name="baseline", dir="/data/runs")
+# -> /data/runs/mnist/baseline
+
+et.init(project="mnist", name="baseline", run_dir="/data/runs/exp-42")
+# -> /data/runs/exp-42, exactly
+```
+
+Use `run_dir` when something else already chose the path — a scheduler's output
+directory, say. Artifacts then live in `<run_dir>/artifacts` and are no longer
+shared with the project's other runs, which is the price of the flat layout.
+Passing both `dir` and `run_dir` is an error.
 
 ## Reading it back
 
