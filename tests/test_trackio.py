@@ -140,9 +140,11 @@ def test_trackio_receives_the_resolved_step(tmp_path, fake_trackio):
         run.log({"loss": 1.0})
         run.log({"acc": 0.5}, step=0, commit=False)
         run.log({"acc2": 0.6}, step=0)
+        run.history.flush(commit_open=True)
         logs = [call for name, call in fake_trackio.calls if name == "log"]
-        assert [entry["step"] for entry in logs] == [0, 0, 0]
+        assert [entry["step"] for entry in logs] == [0, 0]
         assert logs[0]["metrics"] == {"loss": 1.0}
+        assert logs[1]["metrics"] == {"acc": 0.5, "acc2": 0.6}
     finally:
         run.finish()
 
@@ -150,7 +152,7 @@ def test_trackio_receives_the_resolved_step(tmp_path, fake_trackio):
 def test_a_dropped_step_never_reaches_trackio(tmp_path, fake_trackio):
     run = Run(project="p", name="r", dir=str(tmp_path), backends=["trackio"])
     try:
-        run.log({"loss": 1.0}, step=5)
+        run.log({"loss": 1.0}, step=5, commit=True)
         run.log({"loss": 2.0}, step=1)  # backwards: dropped locally
         logs = [call for name, call in fake_trackio.calls if name == "log"]
         assert [entry["step"] for entry in logs] == [5]

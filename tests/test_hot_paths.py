@@ -236,7 +236,7 @@ def test_the_summary_survives_finish(run, tmp_path):
 
 def test_a_dropped_step_does_not_touch_the_summary(run):
     run()
-    et.log({"loss": 1.0}, step=5)
+    et.log({"loss": 1.0}, step=5, commit=True)
     et.log({"loss": 99.0}, step=1)
     assert dict(et.summary())["loss"] == 1.0
 
