@@ -14,7 +14,7 @@ import expr_tracker as et
 from expr_tracker import plugins as pl
 from expr_tracker.history.naming import spans_filename
 from expr_tracker.plugins import CpuTime, GpuStats, TorchMemory, stop_samplers
-from expr_tracker.spans import INDENT
+from expr_tracker.spans import COUNT_METRIC, INDENT, TIME_METRIC, span_metric
 
 
 @pytest.fixture
@@ -421,8 +421,8 @@ def test_plugin_metrics_land_under_the_span_path(run):
         pass
     et.log({"loss": 1.0})
     row = et.history(1)[0]
-    assert row["outer/thing"] == 2.5
-    assert row["outer/inner/thing"] == 2.5
+    assert row[span_metric("thing", "outer")] == 2.5
+    assert row[span_metric("thing", "outer/inner")] == 2.5
 
 
 def test_plugin_metrics_reach_the_span_file(run):
@@ -446,7 +446,7 @@ def test_a_plain_callable_is_an_end_only_plugin(run):
         pass
     et.log({"loss": 1.0})
     assert len(seen) == 1 and seen[0] > 0
-    assert et.history(1)[0]["a/n"] == 1
+    assert et.history(1)[0][span_metric("n", "a")] == 1
 
 
 def test_children_inherit_plugins(run):
@@ -493,7 +493,7 @@ def test_several_plugins_all_contribute(run):
         pass
     et.log({"loss": 1.0})
     row = et.history(1)[0]
-    assert row["a/x"] == 1 and row["a/y"] == 2
+    assert row[span_metric("x", "a")] == 1 and row[span_metric("y", "a")] == 2
 
 
 def test_a_later_plugin_wins_a_key_collision(run):
@@ -501,7 +501,7 @@ def test_a_later_plugin_wins_a_key_collision(run):
     with et.span("a", plugins=[Recorder(1, "x"), Recorder(2, "x")]):
         pass
     et.log({"loss": 1.0})
-    assert et.history(1)[0]["a/x"] == 2
+    assert et.history(1)[0][span_metric("x", "a")] == 2
 
 
 def test_a_plugin_failing_in_start_does_not_break_the_span(run):
@@ -517,7 +517,7 @@ def test_a_plugin_failing_in_start_does_not_break_the_span(run):
         pass
     et.log({"loss": 1.0})
     assert sp.duration_ms > 0
-    assert et.history(1)[0]["a/ok"] == 1
+    assert et.history(1)[0][span_metric("ok", "a")] == 1
 
 
 def test_a_plugin_failing_in_end_does_not_break_the_span(run):
@@ -530,7 +530,7 @@ def test_a_plugin_failing_in_end_does_not_break_the_span(run):
         pass
     et.log({"loss": 1.0})
     assert sp.duration_ms > 0
-    assert et.history(1)[0]["a/good"] == 5
+    assert et.history(1)[0][span_metric("good", "a")] == 5
 
 
 def test_a_repeatedly_failing_plugin_warns_once(run, monkeypatch):
@@ -564,18 +564,18 @@ def test_the_warning_cache_cannot_grow_without_bound(monkeypatch):
 
 
 def test_a_plugin_cannot_overwrite_the_span_timing(run):
-    """duration_ms and count are the span's contract, not a plugin's to set."""
+    """time_ms and count are the span's contract, not a plugin's to set."""
     run()
     with et.span(
-        "a", plugins=[lambda s: {"duration_ms": 999.0, "count": 42, "ok": 7}]
+        "a", plugins=[lambda s: {TIME_METRIC: 999.0, COUNT_METRIC: 42, "ok": 7}]
     ) as sp:
         pass
     et.log({"loss": 1.0})
     row = et.history(1)[0]
-    assert row["a/duration_ms"] == sp.duration_ms != 999.0
-    assert row["a/count"] == 1
-    assert row["a/ok"] == 7  # the rest of the plugin's metrics still land
-    assert "duration_ms" not in sp.metrics
+    assert row[span_metric(TIME_METRIC, "a")] == sp.duration_ms != 999.0
+    assert row[span_metric(COUNT_METRIC, "a")] == 1
+    assert row[span_metric("ok", "a")] == 7  # the plugin's own metrics still land
+    assert TIME_METRIC not in sp.metrics
 
 
 def test_a_span_that_never_began_records_nothing(run):
@@ -663,7 +663,8 @@ def test_repeated_spans_sum_their_plugin_metrics(run):
             pass
     et.log({"loss": 1.0})
     row = et.history(1)[0]
-    assert row["a/thing"] == 6.0 and row["a/count"] == 3
+    assert row[span_metric("thing", "a")] == 6.0
+    assert row[span_metric(COUNT_METRIC, "a")] == 3
 
 
 def test_plugin_metrics_reach_the_trace(run, tmp_path):

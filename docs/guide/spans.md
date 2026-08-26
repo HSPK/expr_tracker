@@ -20,15 +20,29 @@ The step's row then carries:
 
 ```jsonc
 {"_step": 42, "_time": ...,
- "forward/duration_ms": 31.2,  "forward/count": 1,
- "forward/attention/duration_ms": 18.4, "forward/attention/count": 1,
- "forward/mlp/duration_ms": 9.1, "forward/mlp/count": 1,
- "backward/duration_ms": 44.7, "backward/count": 1,
+ "time_ms/forward": 31.2,  "count/forward": 1,
+ "time_ms/forward/attention": 18.4, "count/forward/attention": 1,
+ "time_ms/forward/mlp": 9.1, "count/forward/mlp": 1,
+ "time_ms/backward": 44.7, "count/backward": 1,
  "loss": 0.31}
 ```
 
-Nested names join with `/`, so `forward/norm` and `backward/norm` stay distinct,
-and the alert language reads them directly.
+## How a span metric is named
+
+```
+<what was measured>/<the span's path>
+```
+
+Nested span names join with `/`, so `forward/norm` and `backward/norm` stay
+distinct, and the alert language reads them directly.
+
+The measurement comes **first**, not last, because a tracker UI groups metrics
+by the segment before the first slash. Naming them `forward/time_ms` would file
+every timing under whatever it timed — a span called `train` would put its
+duration in the same group as `train/loss`, and a deep tree would scatter
+timings across the whole metric namespace. This way every timing shares one
+`time_ms` group, every count a `count` group, and your own metric names stay
+yours.
 
 ## Forms
 
@@ -56,7 +70,7 @@ for layer in layers:            # 32 layers
 ```
 
 ```jsonc
-{"layer/duration_ms": 412.8, "layer/count": 32}
+{"time_ms/layer": 412.8, "count/layer": 32}
 ```
 
 The total is usually what you want; divide by the count for the mean.
@@ -92,7 +106,7 @@ already handles it:
 ```python
 et.init(..., alert_rules=[
     "mean(data/load_ms[50]) > 200 => warning: data loading is slowing down",
-    "forward/duration_ms > 3 * mean(forward/duration_ms[100]) => error: slow step",
+    "time_ms/forward > 3 * mean(time_ms/forward[100]) => error: slow step",
 ])
 ```
 
@@ -215,9 +229,9 @@ with et.span("forward", plugins=[CpuTime(), TorchMemory()]):
 
 ```python
 et.history(1)[0]
-# {"forward/duration_ms": 41.2, "forward/count": 1,
-#  "forward/cpu_percent": 101.2, "forward/cpu_time_ms": 41.4,
-#  "forward/gpu_mem_peak_mb": 456.1, "forward/gpu_mem_delta_mb": 8.1, ...}
+# {"time_ms/forward": 41.2, "count/forward": 1,
+#  "cpu_percent/forward": 101.2, "cpu_time_ms/forward": 41.4,
+#  "gpu_mem_peak_mb/forward": 456.1, "gpu_mem_delta_mb/forward": 8.1, ...}
 ```
 
 Like `print_fn`, plugins are inherited by children, can be overridden per span,
@@ -227,8 +241,10 @@ code being measured, and a plugin that fails on every span is logged only once.
 Plugin metrics also reach `spans.jsonl` and show up in the `et trace` viewer
 under a span's *Arguments*.
 
-`duration_ms` and `count` belong to the span. A plugin returning either has that
-key dropped with a warning, so nothing can quietly redefine what a span measured.
+`time_ms` and `count` belong to the span. A plugin returning either has that key
+dropped with a warning, so nothing can quietly redefine what a span measured. Any
+other key becomes its own group: a plugin returning `gpu_mem_peak_mb` writes
+`gpu_mem_peak_mb/<path>`.
 
 ### Built-ins
 

@@ -65,15 +65,17 @@ def main(argv=None) -> Path:
         et.log({"train/loss": 1.0 / (step + 1)})
 
     # Timings are ordinary metrics, so they query like any other
-    rows = et.history(-1, metrics=["step/duration_ms", "step/data/read/duration_ms"])
-    total = sum(row["step/duration_ms"] for row in rows) / len(rows)
-    waiting = sum(row["step/data/read/duration_ms"] for row in rows) / len(rows)
+    # A span's timing is named "<measurement>/<span path>", so every timing in
+    # the run shares one "time_ms" group instead of polluting the metric tree
+    rows = et.history(-1, metrics=["time_ms/step", "time_ms/step/data/read"])
+    total = sum(row["time_ms/step"] for row in rows) / len(rows)
+    waiting = sum(row["time_ms/step/data/read"] for row in rows) / len(rows)
     print(f"\nmean step {total:.2f}ms, of which {waiting:.2f}ms waiting on IO")
     print(f"the data loader is {100 * waiting / total:.0f}% of the step")
 
     last = et.history(1)[0]
     print("\nwhat one step recorded:")
-    for key in sorted(k for k in last if k.endswith(("duration_ms", "cpu_percent"))):
+    for key in sorted(k for k in last if k.startswith(("time_ms/", "cpu_percent/"))):
         print(f"  {key:<38} {last[key]:.2f}")
 
     et.finish()
@@ -82,9 +84,7 @@ def main(argv=None) -> Path:
     print(f"\n{spans} spans -> {output}")
     print("Open it at https://ui.perfetto.dev")
     print("Timings are metrics, so they alert too:")
-    print(
-        '  et.init(..., alert_rules=["step/duration_ms > 500 => warning: slow step"])'
-    )
+    print('  alert_rules=["time_ms/step > 500 => warning: slow step"]')
     return output
 
 

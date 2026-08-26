@@ -11,7 +11,26 @@ import pytest
 import expr_tracker as et
 from expr_tracker.history import HistoryStore
 from expr_tracker.history.naming import spans_filename
-from expr_tracker.spans import COUNT_SUFFIX, DURATION_SUFFIX, active_path, current_span
+from expr_tracker.spans import (
+    COUNT_METRIC,
+    TIME_METRIC,
+    active_path,
+    current_span,
+    span_metric,
+)
+
+
+def timed(path):
+    return span_metric(TIME_METRIC, path)
+
+
+def counted(path):
+    return span_metric(COUNT_METRIC, path)
+
+
+def group_of(metric):
+    """What a tracker UI files a metric under: the part before the first slash."""
+    return metric.split("/")[0]
 
 
 @pytest.fixture
@@ -57,8 +76,8 @@ def test_a_span_records_its_duration_as_a_metric(run):
     with et.span("forward"):
         time.sleep(0.01)
     values = metrics_of(instance)
-    assert values[f"forward/{DURATION_SUFFIX}"] >= 9.0
-    assert values[f"forward/{COUNT_SUFFIX}"] == 1
+    assert values[timed("forward")] >= 9.0
+    assert values[counted("forward")] == 1
 
 
 def test_a_span_returns_its_duration(run):
@@ -78,12 +97,12 @@ def test_nested_spans_join_their_names(run):
             time.sleep(0.002)
     values = metrics_of(instance)
     assert set(values) == {
-        f"forward/{DURATION_SUFFIX}",
-        f"forward/{COUNT_SUFFIX}",
-        f"forward/attention/{DURATION_SUFFIX}",
-        f"forward/attention/{COUNT_SUFFIX}",
-        f"forward/mlp/{DURATION_SUFFIX}",
-        f"forward/mlp/{COUNT_SUFFIX}",
+        timed("forward"),
+        counted("forward"),
+        timed("forward/attention"),
+        counted("forward/attention"),
+        timed("forward/mlp"),
+        counted("forward/mlp"),
     }
 
 
@@ -92,16 +111,14 @@ def test_a_parent_covers_its_children(run):
     with et.span("outer"), et.span("inner"):
         time.sleep(0.01)
     values = metrics_of(instance)
-    assert (
-        values[f"outer/{DURATION_SUFFIX}"] >= values[f"outer/inner/{DURATION_SUFFIX}"]
-    )
+    assert values[timed("outer")] >= values[timed("outer/inner")]
 
 
 def test_three_levels_of_nesting(run):
     instance = run()
     with et.span("a"), et.span("b"), et.span("c"):
         time.sleep(0.002)
-    assert f"a/b/c/{DURATION_SUFFIX}" in metrics_of(instance)
+    assert timed("a/b/c") in metrics_of(instance)
 
 
 def test_the_same_name_under_different_parents_stays_distinct(run):
@@ -111,8 +128,8 @@ def test_the_same_name_under_different_parents_stays_distinct(run):
     with et.span("backward"), et.span("norm"):
         pass
     values = metrics_of(instance)
-    assert f"forward/norm/{DURATION_SUFFIX}" in values
-    assert f"backward/norm/{DURATION_SUFFIX}" in values
+    assert timed("forward/norm") in values
+    assert timed("backward/norm") in values
 
 
 # ------------------------------------------------------------------ aggregation
@@ -124,8 +141,8 @@ def test_repeated_spans_sum_and_count(run):
         with et.span("layer"):
             time.sleep(0.002)
     values = metrics_of(instance)
-    assert values[f"layer/{COUNT_SUFFIX}"] == 4
-    assert values[f"layer/{DURATION_SUFFIX}"] >= 7.0  # summed, not overwritten
+    assert values[counted("layer")] == 4
+    assert values[timed("layer")] >= 7.0  # summed, not overwritten
 
 
 def test_aggregation_resets_between_steps(run):
@@ -138,8 +155,8 @@ def test_aggregation_resets_between_steps(run):
         pass
     et.log({"loss": 2.0})
     rows = instance.history_query(-1)
-    assert rows[0][f"layer/{COUNT_SUFFIX}"] == 3
-    assert rows[1][f"layer/{COUNT_SUFFIX}"] == 1
+    assert rows[0][counted("layer")] == 3
+    assert rows[1][counted("layer")] == 1
 
 
 def test_a_span_does_not_commit_a_step(run):
@@ -160,7 +177,7 @@ def test_spans_and_metrics_share_one_row(run):
     et.log({"loss": 0.5})
     rows = instance.history_query(-1)
     assert len(rows) == 1
-    assert rows[0]["loss"] == 0.5 and f"forward/{DURATION_SUFFIX}" in rows[0]
+    assert rows[0]["loss"] == 0.5 and timed("forward") in rows[0]
 
 
 # ------------------------------------------------------------------ forms
@@ -175,7 +192,7 @@ def test_the_decorator_form(run):
         return x * 2
 
     assert preprocess(21) == 42
-    assert metrics_of(instance)[f"preprocess/{DURATION_SUFFIX}"] >= 2.0
+    assert metrics_of(instance)[timed("preprocess")] >= 2.0
 
 
 def test_the_decorator_preserves_the_function(run):
@@ -198,7 +215,7 @@ def test_the_async_context_manager(run):
             await asyncio.sleep(0.005)
 
     asyncio.run(work())
-    assert metrics_of(instance)[f"fetch/{DURATION_SUFFIX}"] >= 4.0
+    assert metrics_of(instance)[timed("fetch")] >= 4.0
 
 
 def test_the_async_decorator(run):
@@ -210,7 +227,7 @@ def test_the_async_decorator(run):
         return "done"
 
     assert asyncio.run(load()) == "done"
-    assert metrics_of(instance)[f"load/{DURATION_SUFFIX}"] >= 3.0
+    assert metrics_of(instance)[timed("load")] >= 3.0
 
 
 def test_the_manual_form_spans_scopes(run):
@@ -219,7 +236,7 @@ def test_the_manual_form_spans_scopes(run):
     time.sleep(0.004)
     duration = span.end()
     assert duration >= 3.0
-    assert metrics_of(instance)[f"epoch/{DURATION_SUFFIX}"] >= 3.0
+    assert metrics_of(instance)[timed("epoch")] >= 3.0
 
 
 def test_ending_twice_is_harmless(run):
@@ -227,7 +244,7 @@ def test_ending_twice_is_harmless(run):
     span = et.start_span("once")
     first = span.end()
     assert span.end() == first
-    assert metrics_of(instance)[f"once/{COUNT_SUFFIX}"] == 1
+    assert metrics_of(instance)[counted("once")] == 1
 
 
 # ------------------------------------------------------------------ attributes
@@ -288,7 +305,7 @@ def test_the_span_file_can_be_switched_off(run, tmp_path):
     et.log({"loss": 1.0})
     et.finish()
     assert spans_of(tmp_path) == []
-    assert f"forward/{DURATION_SUFFIX}" in instance.history_query(-1)[0]
+    assert timed("forward") in instance.history_query(-1)[0]
 
 
 def test_spans_follow_the_stream(run, tmp_path):
@@ -312,7 +329,7 @@ def test_an_exception_is_recorded_and_reraised(run, tmp_path):
     et.finish()
 
     assert spans_of(tmp_path)[0]["error"] == "ValueError"
-    assert f"risky/{DURATION_SUFFIX}" in metrics_of(instance)
+    assert timed("risky") in metrics_of(instance)
 
 
 def test_the_decorator_re_raises(run, tmp_path):
@@ -387,7 +404,7 @@ def test_each_thread_keeps_its_own_stack(run):
 
     assert sorted(seen) == ["main", "worker"]  # neither nested inside the other
     values = metrics_of(instance)
-    assert f"main/{DURATION_SUFFIX}" in values and f"worker/{DURATION_SUFFIX}" in values
+    assert timed("main") in values and timed("worker") in values
 
 
 def test_concurrent_tasks_do_not_nest(run):
@@ -403,7 +420,7 @@ def test_concurrent_tasks_do_not_nest(run):
 
     assert sorted(asyncio.run(main())) == ["a", "b"]
     values = metrics_of(instance)
-    assert f"a/{DURATION_SUFFIX}" in values and f"b/{DURATION_SUFFIX}" in values
+    assert timed("a") in values and timed("b") in values
 
 
 def test_many_threads_record_every_span(run):
@@ -419,7 +436,7 @@ def test_many_threads_record_every_span(run):
         thread.start()
     for thread in threads:
         thread.join(timeout=20)
-    assert metrics_of(instance)[f"parallel/{COUNT_SUFFIX}"] == 160
+    assert metrics_of(instance)[counted("parallel")] == 160
 
 
 # ------------------------------------------------------------------ names
@@ -466,7 +483,7 @@ def test_a_span_metric_is_usable_in_an_alert_rule(tmp_path):
                 }
             ]
         },
-        alert_rules=[f"forward/{DURATION_SUFFIX} > 5 => warning: forward is slow"],
+        alert_rules=[timed("forward") + " > 5 => warning: forward is slow"],
     )
     try:
         with et.span("forward"):
@@ -549,7 +566,7 @@ def test_a_started_span_works_as_a_context_manager(run):
     with et.start_span("manual") as span:
         time.sleep(0.003)
     assert span.duration_ms >= 2.0
-    assert metrics_of(instance)[f"manual/{DURATION_SUFFIX}"] >= 2.0
+    assert metrics_of(instance)[timed("manual")] >= 2.0
 
 
 def test_a_started_span_records_an_exception(run, tmp_path):
@@ -569,7 +586,7 @@ def test_a_started_span_works_as_an_async_context_manager(run):
             await asyncio.sleep(0.003)
 
     asyncio.run(work())
-    assert metrics_of(instance)[f"amanual/{DURATION_SUFFIX}"] >= 2.0
+    assert metrics_of(instance)[timed("amanual")] >= 2.0
 
 
 def test_a_started_span_records_an_async_exception(run, tmp_path):
@@ -618,3 +635,66 @@ def test_the_track_is_recorded(run, tmp_path):
     records = spans_of(tmp_path)
     assert len({r["track"] for r in records}) == 1  # a tree shares one track
     assert records[0]["track"] == threading.get_ident()
+
+
+# ------------------------------------------------------------------ metric names
+
+
+def test_a_timing_is_named_measurement_first(run):
+    instance = run()
+    with et.span("forward"), et.span("attention"):
+        pass
+    values = metrics_of(instance)
+    assert "time_ms/forward" in values
+    assert "time_ms/forward/attention" in values
+    assert "count/forward/attention" in values
+
+
+def test_timings_never_land_in_a_metric_group_of_yours(run):
+    """A span called `train` must not file its duration beside train/loss."""
+    instance = run()
+    with et.span("train"):
+        pass
+    instance.log({"train/loss": 1.0, "train/lr": 3e-4})
+    instance.history.flush(commit_open=True)
+    row = instance.history_query(-1)[-1]
+    groups = {}
+    for key in row:
+        if not key.startswith("_"):
+            groups.setdefault(group_of(key), []).append(key)
+    assert groups["train"] == ["train/loss", "train/lr"]
+    assert groups["time_ms"] == ["time_ms/train"]
+    assert groups["count"] == ["count/train"]
+
+
+def test_every_timing_in_a_run_shares_one_group(run):
+    instance = run()
+    with et.span("step"):
+        with et.span("forward"):
+            pass
+        with et.span("backward"):
+            pass
+    values = metrics_of(instance)
+    timings = [key for key in values if group_of(key) == "time_ms"]
+    assert sorted(timings) == [
+        "time_ms/step",
+        "time_ms/step/backward",
+        "time_ms/step/forward",
+    ]
+
+
+def test_a_plugin_metric_gets_its_own_group_too(run):
+    instance = run()
+    with et.span("step", plugins=[lambda span: {"gpu_mem_mb": 512.0}]):
+        pass
+    assert metrics_of(instance)["gpu_mem_mb/step"] == 512.0
+
+
+def test_the_name_helper_is_what_the_store_records(run):
+    """The helper is the contract; nothing should build these names by hand."""
+    instance = run()
+    with et.span("a/b"):  # a slash in a name is part of the path, not a level
+        pass
+    values = metrics_of(instance)
+    assert span_metric(TIME_METRIC, "a/b") in values
+    assert values[span_metric(COUNT_METRIC, "a/b")] == 1

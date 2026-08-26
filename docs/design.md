@@ -106,6 +106,13 @@ Two differences from a log call:
 - the metrics are built here from floats and ints, so they skip `RecordCodec`.
   That encoder costs 5 µs, which a per-sub-step call cannot afford.
 
+Metrics are named `<measurement>/<span path>` — `time_ms/step/forward`, not
+`step/forward/time_ms`. A tracker UI groups by the segment before the first
+slash, so putting the path first would file every timing under the thing it
+timed, mixing a span called `train` in with `train/loss` and scattering a deep
+tree across the metric namespace. Measurement-first keeps all timings in one
+group and leaves the caller's names alone.
+
 A span never commits a step: durations ride along with whatever `log()` commits,
 so timing a region adds no row. The tree, with timestamps and attributes, goes to
 `spans[.stream][.rankN].jsonl` through a second `JsonlWriter`, enqueued rather

@@ -310,14 +310,14 @@ def test_profiling_records_the_span_tree_as_metrics(profile_step, tmp_path):
     output = profile_step.main(argv(**{"--steps": 5, "--dir": tmp_path}))
     row = read_history(output.parent, 1)[0]
     for key in (
-        "step/duration_ms",
-        "step/data/read/duration_ms",
-        "step/data/collate/duration_ms",
-        "step/forward/duration_ms",
-        "step/backward/duration_ms",
+        "time_ms/step",
+        "time_ms/step/data/read",
+        "time_ms/step/data/collate",
+        "time_ms/step/forward",
+        "time_ms/step/backward",
     ):
         assert key in row, key
-    assert row["step/duration_ms"] >= row["step/forward/duration_ms"]
+    assert row["time_ms/step"] >= row["time_ms/step/forward"]
 
 
 def test_profiling_attaches_the_cpu_plugin_to_every_span(profile_step, tmp_path):
@@ -325,8 +325,8 @@ def test_profiling_attaches_the_cpu_plugin_to_every_span(profile_step, tmp_path)
 
     output = profile_step.main(argv(**{"--steps": 5, "--dir": tmp_path}))
     row = read_history(output.parent, 1)[0]
-    assert row["step/forward/cpu_percent"] > 50  # a spin loop
-    assert row["step/data/read/cpu_percent"] < 50  # a sleep
+    assert row["cpu_percent/step/forward"] > 50  # a spin loop
+    assert row["cpu_percent/step/data/read"] < 50  # a sleep
 
 
 def test_profiling_writes_a_loadable_trace(profile_step, tmp_path):

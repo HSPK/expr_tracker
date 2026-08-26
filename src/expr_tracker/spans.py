@@ -23,9 +23,9 @@ from loguru import logger
 # and each asyncio task gets its own copy, which is exactly span nesting.
 _STACK: ContextVar[tuple[Span, ...]] = ContextVar("et_span_stack", default=())
 
-DURATION_SUFFIX = "duration_ms"
-COUNT_SUFFIX = "count"
-RESERVED_METRICS = frozenset({DURATION_SUFFIX, COUNT_SUFFIX})
+TIME_METRIC = "time_ms"
+COUNT_METRIC = "count"
+RESERVED_METRICS = frozenset({TIME_METRIC, COUNT_METRIC})
 # Spaces, not a tab: a terminal measures tab stops from the start of the line, so
 # behind a log prefix the first level collapses to whatever is left of the stop.
 # Two spaces render the same width wherever the line begins.
@@ -43,6 +43,19 @@ def _warn_once(*key: str) -> None:
         _WARNED.clear()
     _WARNED.add(key)
     logger.warning(key[-1])
+
+
+def span_metric(metric: str, path: str) -> str:
+    """Name a span's measurement: what was measured first, then what it measured.
+
+    ``time_ms/step/forward`` rather than ``step/forward/time_ms``, because a
+    tracker UI groups metrics by the segment before the first slash. With the
+    path first, every timing lands in the group of whatever it timed, next to
+    that name's real metrics -- a span called ``train`` would file its duration
+    beside ``train/loss``. With the measurement first, all timings share one
+    group and the metric namespace stays the caller's.
+    """
+    return f"{metric}/{path}"
 
 
 def _safely(plugin: Any, hook: str, span: Span):
@@ -233,9 +246,12 @@ class Span:
         if self._store is None:
             return
         metrics = {
-            f"{self.path}/{DURATION_SUFFIX}": self.duration_ms,
-            f"{self.path}/{COUNT_SUFFIX}": 1,
-            **{f"{self.path}/{key}": value for key, value in self.metrics.items()},
+            span_metric(TIME_METRIC, self.path): self.duration_ms,
+            span_metric(COUNT_METRIC, self.path): 1,
+            **{
+                span_metric(key, self.path): value
+                for key, value in self.metrics.items()
+            },
         }
         record = {
             "name": self.path,

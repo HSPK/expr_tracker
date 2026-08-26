@@ -181,8 +181,10 @@ span.metrics                                    # what the plugins measured
 ```
 
 `et.span` is also an async context manager and a decorator. A closed span adds
-`<path>/duration_ms`, `<path>/count` and one key per plugin metric to the open
-row, and appends the full record to `spans.jsonl`.
+`time_ms/<path>`, `count/<path>` and one key per plugin metric to the open row,
+and appends the full record to `spans.jsonl`. The measurement leads the name so
+that a UI groups every timing together instead of filing each one under whatever
+it timed; `Span.duration_ms` is the same number on the object.
 
 `print_fn(line)` announces the span's start and end, indented two spaces per level.
 `plugins` measure a resource across the span; both are inherited by child spans
