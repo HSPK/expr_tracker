@@ -137,7 +137,7 @@ def test_backend_receives_init_log_and_finish(tmp_path):
         tags=["a"],
         notes="hello",
     )
-    run.log({"loss": 1.0}, step=0)
+    run.log({"loss": 1.0}, step=0, commit=True)
     run.define_metric("loss", summary="min")
     run.finish()
 
@@ -146,8 +146,7 @@ def test_backend_receives_init_log_and_finish(tmp_path):
     assert init_kwargs["project"] == "p" and init_kwargs["config"] == {"lr": 0.1}
     assert init_kwargs["tags"] == ["a"] and init_kwargs["notes"] == "hello"
     assert backend.calls[1][1] == ({"loss": 1.0},)
-    # an explicit step defers the commit locally, so the backend defers it too
-    assert backend.calls[1][2] == {"step": 0, "commit": False}
+    assert backend.calls[1][2] == {"step": 0, "commit": True}
 
 
 def test_backend_is_named_after_its_class(tmp_path):
@@ -286,7 +285,7 @@ def test_rejected_step_reaches_no_sink(tmp_path):
     backend = FakeBackend()
     run = Run(project="p", name="r", dir=str(tmp_path), backends=[backend])
     try:
-        run.log({"loss": 1.0}, step=5)
+        run.log({"loss": 1.0}, step=5, commit=True)
         run.log({"loss": 2.0}, step=1)  # backwards: dropped
         assert [c[1][0] for c in run.backends["fakebackend"].calls[1:]] == [
             {"loss": 1.0}
@@ -294,6 +293,27 @@ def test_rejected_step_reaches_no_sink(tmp_path):
         assert dict(run.summary)["loss"] == 1.0
     finally:
         run.finish()
+
+
+def test_committed_row_fans_out_span_metrics(tmp_path):
+    backend = FakeBackend()
+    et.init(project="p", name="r", dir=str(tmp_path), backends=[backend])
+    try:
+        et.log({"loss": 1.0}, commit=False)
+        with et.span("forward"):
+            pass
+        et.log({"accuracy": 0.5})
+
+        log_call = backend.calls[1]
+        metrics = log_call[1][0]
+        assert metrics["loss"] == 1.0
+        assert metrics["accuracy"] == 0.5
+        assert metrics["count/forward"] == 1
+        assert "time_ms/forward" in metrics
+        assert et.summary()["count/forward"] == 1
+        assert "time_ms/forward" in et.summary()
+    finally:
+        et.finish()
 
 
 def test_finish_is_idempotent(tmp_path):

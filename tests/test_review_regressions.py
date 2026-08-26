@@ -473,11 +473,11 @@ def test_alias_added_on_a_dedup_reuse_is_persisted(tmp_path):
         et.finish()
 
 
-def test_summary_ignores_non_string_keys(tmp_path):
+def test_summary_matches_history_key_encoding(tmp_path):
     et.init(project="p", name="s", dir=str(tmp_path), backends=[])
     try:
         et.log({(1, 2): 3, b"k": 4, "loss": 5})
-        assert dict(et.summary()) == {"loss": 5}
+        assert dict(et.summary()) == {"(1, 2)": 3, "k": 4, "loss": 5}
     finally:
         et.finish()
 

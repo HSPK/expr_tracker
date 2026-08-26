@@ -118,6 +118,11 @@ so timing a region adds no row. The tree, with timestamps and attributes, goes t
 `spans[.stream][.rankN].jsonl` through a second `JsonlWriter`, enqueued rather
 than appended so a span does not pay for a flush decision of its own.
 
+The committed history row is also the fan-out boundary. Summary, alerts and
+remote backends consume the exact row emitted by `HistoryStore`, rather than the
+individual `log()` calls that assembled it. Span and plugin metrics therefore
+reach every sink without a second metric path.
+
 Plugins hang off the same two hooks. `start` runs before the clock starts and
 `end` after it stops, so a plugin never inflates the duration it reports on; what
 `end` returns is merged into the span's metrics under the span's own path, which

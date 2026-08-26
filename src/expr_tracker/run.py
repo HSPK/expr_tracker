@@ -15,7 +15,7 @@ from typing import Any, Literal
 from loguru import logger
 
 from .artifacts import Artifact, ArtifactStore, coerce_artifact
-from .history import HistoryStore, current_rank, resolve_commit
+from .history import HistoryStore, current_rank
 from .history.naming import resolve_artifact_root, sidecar_filename
 from .summary import Summary
 
@@ -245,34 +245,32 @@ class Run:
     # ------------------------------------------------------------------ logging
 
     def _on_commit(self, record: dict):
+        metrics = {
+            key: value
+            for key, value in record.items()
+            if isinstance(key, str) and not key.startswith("_")
+        }
+        step = record["_step"]
+        try:
+            self.summary.observe(metrics)
+        except Exception as e:  # a sink must never break the training loop
+            logger.warning(f"Failed to update summary: {e}")
+        for name, backend in self.backends.items():
+            extra = {"commit": True} if self._takes_commit.get(name) else {}
+            try:
+                backend.log(metrics, step=step, **extra)
+            except Exception as e:
+                logger.warning(f"Failed to log metrics to {name}: {e}")
         if self.alerts is not None:
             self.alerts.on_step(record)
 
     def log(self, data: dict, step: int | None = None, commit: bool | None = None):
         """Log metrics, mirroring ``wandb.log(data, step=..., commit=...)``.
 
-        All sinks share one timeline: if local history rejects the call (closed run,
-        or a backward step), the summary and remote backends are skipped too.
+        Local history owns row assembly. Summary, alerts and remote backends receive
+        the same complete row only after it commits, including span/plugin metrics.
         """
-        resolved_step = self.history.log(data, step=step, commit=commit)
-        if resolved_step is None:
-            return
-        try:
-            self.summary.observe(data)
-        except Exception as e:  # a sink must never break the training loop
-            logger.warning(f"Failed to update summary: {e}")
-        for name, backend in self.backends.items():
-            # Forward the resolved step and commit so a backend's row layout
-            # matches the local history instead of drifting on its own counter.
-            extra = (
-                {"commit": resolve_commit(step, commit)}
-                if self._takes_commit.get(name)
-                else {}
-            )
-            try:
-                backend.log(data, step=resolved_step, **extra)
-            except Exception as e:
-                logger.warning(f"Failed to log metrics to {name}: {e}")
+        self.history.log(data, step=step, commit=commit)
 
     def history_query(self, *args, **kwargs):
         return self.history.get(*args, **kwargs)

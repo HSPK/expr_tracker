@@ -252,7 +252,7 @@ def test_backend_receives_commit_argument(tmp_path):
         et.log({"v": 1}, step=3, commit=False)
     finally:
         et.finish()
-    assert calls == [({"v": 1}, 3, False)]
+    assert calls == [({"v": 1}, 3, True)]
 
 
 def test_legacy_backend_without_commit_still_works(tmp_path):
@@ -313,7 +313,7 @@ def test_rejected_step_reaches_no_sink(tmp_path):
 
     et.init(project="p", name="mono", dir=str(tmp_path), backends=[Backend()])
     try:
-        et.log({"loss": 1.0}, step=10)
+        et.log({"loss": 1.0}, step=10, commit=True)
         et.log({"loss": 99.0}, step=5)  # rejected under the default step policy
         assert forwarded == [{"loss": 1.0}]
         assert dict(et.summary()) == {"loss": 1.0}

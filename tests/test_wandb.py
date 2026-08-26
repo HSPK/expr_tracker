@@ -142,9 +142,9 @@ def test_several_logs_for_one_step_stay_one_wandb_step(run):
 def test_an_explicit_step_defers_the_commit_on_wandb_too(run):
     instance = run(name="explicit")
     instance.log({"a": 1}, step=7)
-    assert wandb.run.step == 7  # positioned, not yet advanced
+    assert wandb.run.step == 0
     instance.log({"b": 2}, step=7)
-    assert wandb.run.step == 7
+    assert wandb.run.step == 0
     instance.log({"c": 3}, step=8, commit=True)
     assert wandb.run.step == 9
 

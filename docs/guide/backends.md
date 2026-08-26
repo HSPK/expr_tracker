@@ -16,15 +16,17 @@ optional.
 
 | Call | Forwarded as |
 | --- | --- |
-| `et.log(data, step, commit)` | `backend.log(data, step=<resolved>, commit=<resolved>)` |
+| committed history row | `backend.log(metrics, step=<resolved>, commit=True)` |
 | `et.init(...)` | `backend.init(project, name, config, entity, tags, notes, resume, ...)` |
 | `et.define_metric(name, **kw)` | `backend.define_metric` if it has one |
 | `et.log_artifact(...)` | `backend.log_artifact` if it has one |
 | `et.finish(exit_code)` | `backend.finish()` |
 
-The **resolved** step matters: two `log()` calls for one step stay one step on the
-backend too, and a step dropped by the local step policy is never forwarded. A
-backend that does not accept `commit` (trackio) simply does not receive it.
+Local history assembles the row first. Summary, alerts and remote backends then
+receive that same committed row, including span and plugin metrics. Two `log()`
+calls for one step therefore produce one backend call, and a step dropped by the
+local step policy is never forwarded. A backend that does not accept `commit`
+(trackio) simply does not receive it.
 
 ## Failure handling
 
