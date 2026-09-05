@@ -1,6 +1,7 @@
 """The full CLI surface: every command, every format, and their error paths."""
 
 import json
+import os
 
 import pytest
 from click.testing import CliRunner
@@ -10,7 +11,9 @@ from expr_tracker.history import HistoryStore
 
 
 @pytest.fixture
-def runner():
+def runner(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(os, "environ", os.environ.copy())
     return CliRunner()
 
 
@@ -235,6 +238,81 @@ def test_alert_rejects_an_unknown_level(runner, channel):
 
 def test_alert_without_a_message_fails(runner, channel):
     assert runner.invoke(cli.main, ["alert"]).exit_code != 0
+
+
+def test_alert_loads_dotenv_before_resolving_channels(runner, monkeypatch, tmp_path):
+    from expr_tracker.alerts import load_config
+
+    monkeypatch.delenv("ET_LARK_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("ET_ALERT_CONFIG", raising=False)
+    (tmp_path / ".env").write_text(
+        '# Alert settings\nexport ET_LARK_WEBHOOK_URL="https://example.test/hook"\n',
+        encoding="utf-8",
+    )
+    configs = []
+    monkeypatch.setattr(cli, "send_alert", lambda **kwargs: configs.append(load_config()))
+
+    invoke(runner, "alert", "hello")
+
+    assert any(
+        c.type == "lark" and c.resolve_url() == "https://example.test/hook"
+        for c in configs[0].channels
+    )
+
+
+@pytest.mark.parametrize("existing", ["from-shell", ""])
+def test_alert_dotenv_preserves_existing_environment(
+    runner, channel, monkeypatch, tmp_path, existing
+):
+    monkeypatch.setenv("ET_TEST_DOTENV", existing)
+    (tmp_path / ".env").write_text("ET_TEST_DOTENV=from-file\n", encoding="utf-8")
+
+    invoke(runner, "alert", "hello")
+
+    assert os.environ["ET_TEST_DOTENV"] == existing
+    assert len(channel) == 1
+
+
+def test_alert_does_not_search_parent_dotenv(runner, channel, monkeypatch, tmp_path):
+    monkeypatch.delenv("ET_TEST_DOTENV", raising=False)
+    (tmp_path / ".env").write_text("ET_TEST_DOTENV=parent\n", encoding="utf-8")
+    child = tmp_path / "child"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    invoke(runner, "alert", "hello")
+
+    assert "ET_TEST_DOTENV" not in os.environ
+    assert len(channel) == 1
+
+
+def test_alert_can_skip_dotenv(runner, channel, monkeypatch, tmp_path):
+    monkeypatch.delenv("ET_TEST_DOTENV", raising=False)
+    (tmp_path / ".env").write_text("ET_TEST_DOTENV=from-file\n", encoding="utf-8")
+
+    invoke(runner, "alert", "hello", "--no-dotenv")
+
+    assert "ET_TEST_DOTENV" not in os.environ
+    assert len(channel) == 1
+
+
+def test_alert_reports_unreadable_dotenv(runner, channel, tmp_path):
+    (tmp_path / ".env").mkdir()
+
+    result = runner.invoke(cli.main, ["alert", "hello"])
+
+    assert result.exit_code != 0
+    assert "Could not read .env" in result.output
+    assert not channel
+
+
+def test_other_commands_do_not_load_dotenv(runner, monkeypatch, tmp_path):
+    monkeypatch.delenv("ET_TEST_DOTENV", raising=False)
+    (tmp_path / ".env").write_text("ET_TEST_DOTENV=from-file\n", encoding="utf-8")
+
+    invoke(runner, "rules", "explain", "loss > 1")
+
+    assert "ET_TEST_DOTENV" not in os.environ
 
 
 # ------------------------------------------------------------------ rules

@@ -89,3 +89,17 @@ et alert "node 3 is on fire" --level critical --channel oncall
 
 Channels come from the same configuration the library uses: `ET_ALERT_CONFIG` or the
 `ET_LARK_WEBHOOK_URL` environment variable. See [Alerts](alerts.md).
+
+`et alert` automatically loads `.env` from the directory where you invoke it,
+before resolving alert configuration. Existing environment variables take
+precedence, including empty values. It does not search parent directories; a
+missing `.env` is fine. Use `--no-dotenv` to disable loading.
+
+```dotenv
+# .env
+ET_LARK_WEBHOOK_URL=https://example.com/your-webhook
+```
+
+Quoted values, comments, and `${VAR}` expansion are supported; shell commands are
+not executed. Keep secrets out of version control. This loading applies only to
+`et alert`, not other CLI commands or the Python API.

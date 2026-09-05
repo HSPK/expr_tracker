@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 
 from .alerts import alert as send_alert
 from .alerts.dispatch import Dispatcher
@@ -26,8 +28,21 @@ def main():
 @click.option("--title", default="Alert", help="Title of the alert")
 @click.option("--level", default="info", help="info | warning | error | critical")
 @click.option("--channel", "channels", multiple=True, help="Restrict to these channels")
-def alert(msg: str, title: str, level: str, channels: tuple[str, ...]):
-    """Send a manual alert."""
+@click.option(
+    "--no-dotenv", is_flag=True, help="Skip loading .env from the current directory"
+)
+def alert(
+    msg: str, title: str, level: str, channels: tuple[str, ...], no_dotenv: bool
+):
+    """Send a manual alert, loading the current directory's .env by default."""
+    if not no_dotenv:
+        try:
+            with Path(".env").open(encoding="utf-8") as stream:
+                load_dotenv(stream=stream, override=False)
+        except FileNotFoundError:
+            pass
+        except (OSError, UnicodeError) as exc:
+            raise click.ClickException(f"Could not read .env: {exc}") from exc
     send_alert(title=title, text=msg, level=level, channels=list(channels) or None)
 
 
