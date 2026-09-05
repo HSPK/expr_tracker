@@ -26,6 +26,9 @@ Artifacts are **deduplicated by content**: logging the same files again reuses t
 existing version rather than creating a new one, while any new aliases are still
 recorded against it.
 
+Publishers sharing a store serialize version allocation, file copying, and index
+updates with a filesystem lock, including when they run in separate processes.
+
 ```python
 a = et.log_artifact("ckpt.pt", name="model")   # v0
 b = et.log_artifact("ckpt.pt", name="model", aliases=["best"])

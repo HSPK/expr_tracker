@@ -461,6 +461,7 @@ name = "expr-tracker"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "filelock" },
     { name = "loguru" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -510,6 +511,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1.0" },
+    { name = "filelock", specifier = ">=3.12" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "nvidia-ml-py", marker = "extra == 'all'", specifier = ">=12.0" },
     { name = "nvidia-ml-py", marker = "extra == 'gpu'", specifier = ">=12.0" },

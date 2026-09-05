@@ -53,7 +53,7 @@ class Posted(list):
 def posted(monkeypatch):
     sink = Posted()
 
-    def fake_post(url, payload, timeout, headers=None):
+    def fake_post(url, payload, timeout, headers=None, *, retry_on_status=None):
         sink.append({"url": url, "payload": payload, "headers": headers})
         return sink.reply
 
@@ -256,7 +256,7 @@ def test_an_unparsable_reply_is_accepted(posted):
 def test_a_transport_failure_is_never_swallowed(posted, monkeypatch):
     """Decoding the reply must not shield a POST that failed outright."""
 
-    def explode(url, payload, timeout, headers=None):
+    def explode(url, payload, timeout, headers=None, *, retry_on_status=None):
         raise SendError("HTTP 500 from the webhook", retryable=True)
 
     monkeypatch.setattr(backend_module, "post_json", explode)

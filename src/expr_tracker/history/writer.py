@@ -146,7 +146,11 @@ class JsonlWriter:
 
     def _rebuild_from_disk(self, size: int):
         """Rescan from the last anchor that still lies inside the file."""
-        usable = [entry for entry in self.index if entry[2] < size]
+        # Unsorted prefixes can contain a maximum between anchors. Rescan them
+        # fully; after truncation even the old metadata's maximum may be gone.
+        usable = (
+            [entry for entry in self.index if entry[2] < size] if self.sorted else []
+        )
         anchor_step, start_line, start_offset = usable[-1] if usable else (None, 0, 0)
         self.index = usable[:-1]  # the last anchor is re-added while rescanning
         # No predecessor for the first rescanned line: the anchor line is read again,

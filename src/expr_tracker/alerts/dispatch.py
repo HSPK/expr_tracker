@@ -278,10 +278,17 @@ class Dispatcher:
 
     def flush(self, timeout: float = 5.0):
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if all(rt.pending == 0 for rt in self.channels.values()):
-                return
-            time.sleep(0.02)
+        for runtime in self.channels.values():
+            work = runtime.queue
+            if work is None:
+                continue
+            # A dequeued message remains unfinished until delivery (and retries) ends.
+            with work.all_tasks_done:
+                while work.unfinished_tasks:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return
+                    work.all_tasks_done.wait(remaining)
 
     def close(self, timeout: float = 5.0):
         self.flush(timeout)

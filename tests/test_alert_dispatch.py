@@ -246,6 +246,79 @@ def test_async_delivery_and_flush():
     assert len(received) == 10
 
 
+@pytest.fixture
+def blocked_delivery():
+    started = threading.Event()
+    release = threading.Event()
+    completed = threading.Event()
+
+    def handler(msg):
+        started.set()
+        release.wait()
+        completed.set()
+
+    policy = WebhookPolicy(
+        async_send=True, dedup_window=0, rate_limit_per_minute=None, max_retries=0
+    )
+    dispatcher, _ = make(policy=policy)
+    dispatcher.channels["test"].config.options["handler"] = handler
+    try:
+        dispatcher.send(message())
+        assert started.wait(2.0)
+        assert dispatcher.channels["test"].pending == 0
+        yield dispatcher, release, completed
+    finally:
+        release.set()
+        dispatcher.close(timeout=2.0)
+
+
+def test_flush_waits_for_inflight_delivery(blocked_delivery, monkeypatch):
+    dispatcher, release, completed = blocked_delivery
+    work = dispatcher.channels["test"].queue
+    waiting = threading.Event()
+    flushed = threading.Event()
+    original_wait = work.all_tasks_done.wait
+
+    def wait(timeout=None):
+        waiting.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(work.all_tasks_done, "wait", wait)
+
+    def flush():
+        dispatcher.flush(timeout=2.0)
+        flushed.set()
+
+    thread = threading.Thread(target=flush)
+    thread.start()
+    try:
+        assert waiting.wait(1.0)
+        assert not flushed.is_set()
+        assert not completed.is_set()
+        release.set()
+        assert flushed.wait(1.0)
+        assert completed.is_set()
+        assert dispatcher.stats()["test"]["sent"] == 1
+        assert work.unfinished_tasks == 0
+    finally:
+        release.set()
+        thread.join(timeout=3.0)
+    assert not thread.is_alive()
+
+
+def test_flush_timeout_leaves_inflight_delivery_running(blocked_delivery):
+    dispatcher, release, completed = blocked_delivery
+    started = time.monotonic()
+    dispatcher.flush(timeout=0.05)
+    assert time.monotonic() - started >= 0.05
+    assert not completed.is_set()
+    assert dispatcher.channels["test"].queue.unfinished_tasks == 1
+    release.set()
+    dispatcher.flush(timeout=2.0)
+    assert completed.is_set()
+    assert dispatcher.stats()["test"]["sent"] == 1
+
+
 def test_queue_full_drops_oldest():
     policy = WebhookPolicy(
         async_send=True, dedup_window=0, rate_limit_per_minute=None, queue_size=2

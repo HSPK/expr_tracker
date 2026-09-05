@@ -6,7 +6,7 @@ import json
 import smtplib
 from email.message import EmailMessage
 
-from ..models import AlertLevel, AlertMessage
+from ..models import AlertLevel, AlertMessage, WebhookPolicy
 from .base import (
     AlertBackend,
     SendError,
@@ -53,8 +53,15 @@ class UrlBackend(AlertBackend):
         return policy.timeout if policy else 10.0
 
     def post(self, payload: dict) -> str:
+        policy = self.config.policy
         return post_json(
-            self.url, payload, self.timeout, self.config.options.get("headers")
+            self.url,
+            payload,
+            self.timeout,
+            self.config.options.get("headers"),
+            retry_on_status=(
+                policy.retry_on_status if policy else WebhookPolicy.retry_on_status
+            ),
         )
 
     def post_reply(self, payload: dict) -> dict:

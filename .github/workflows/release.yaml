@@ -10,8 +10,12 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yaml
+
   release:
     name: Build and publish to PyPI
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       # required for PyPI trusted publishing (OIDC)

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
 from loguru import logger
 
 DEFAULT_TYPE = "dataset"
@@ -220,7 +221,8 @@ class ArtifactStore:
             )
         artifact.aliases = sorted({*artifact.aliases, *(aliases or [])} - {LATEST})
         artifact.digest = self._digest(artifact)
-        with self._lock:
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self._lock, FileLock(self.root / ".lock"):
             # One pass over the index answers both questions: has this exact content
             # been stored before, and what is the next free version?
             versions = [a for a in self.entries() if a.name == artifact.name]

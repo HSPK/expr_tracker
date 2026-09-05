@@ -148,6 +148,15 @@ def test_increasing_and_decreasing_are_strict():
     assert value("decreasing(m)", context({"m": [3, 3, 1]})) is False
 
 
+@pytest.mark.parametrize("function", ["increasing", "decreasing"])
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
+@pytest.mark.parametrize("position", range(4))
+def test_trends_are_unknown_with_nonfinite_values(function, nonfinite, position):
+    values = [1, 2, 2, 1]
+    values[position] = nonfinite
+    assert value(f"{function}(m)", context({"m": values})) is UNKNOWN
+
+
 # ------------------------------------------------------------------ empty input
 
 
@@ -182,7 +191,16 @@ def test_count_of_an_empty_series_is_zero():
 
 
 @pytest.mark.parametrize(
-    "expression", ["std(m)", "var(m)", "diff(m)", "slope(m)", "zscore(m)"]
+    "expression",
+    [
+        "std(m)",
+        "var(m)",
+        "diff(m)",
+        "slope(m)",
+        "zscore(m)",
+        "increasing(m)",
+        "decreasing(m)",
+    ],
 )
 def test_functions_needing_two_points_reject_one(expression):
     assert value(expression, context({"m": [1]})) is UNKNOWN

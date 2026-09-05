@@ -39,7 +39,7 @@ et.history(-1, output_type="pd")  # everything, as a DataFrame
 ## Install
 
 ```bash
-uv add expr_tracker                 # local-first: click, loguru, pydantic only
+uv add expr_tracker                 # local-first; no remote backend required
 uv add "expr_tracker[wandb]"        # mirror to Weights & Biases
 uv add "expr_tracker[trackio]"      # mirror to trackio
 uv add "expr_tracker[pandas]"       # history(output_type="pandas")

@@ -1,22 +1,31 @@
 """Channel payload construction and HTTP error mapping."""
 
+import io
 import json
 import urllib.error
 import urllib.request
+from unittest.mock import Mock
 
 import pytest
 
 from expr_tracker.alerts import backends as backend_module
 from expr_tracker.alerts.backends import create_backend
 from expr_tracker.alerts.backends.base import SendError, post_json
-from expr_tracker.alerts.models import AlertLevel, AlertMessage, ChannelConfig
+from expr_tracker.alerts.dispatch import Dispatcher
+from expr_tracker.alerts.models import (
+    AlertConfig,
+    AlertLevel,
+    AlertMessage,
+    ChannelConfig,
+    WebhookPolicy,
+)
 
 
 @pytest.fixture
 def captured(monkeypatch):
     sink: list = []
 
-    def fake_post(url, payload, timeout, headers=None):
+    def fake_post(url, payload, timeout, headers=None, *, retry_on_status=None):
         sink.append(
             {"url": url, "payload": payload, "timeout": timeout, "headers": headers}
         )
@@ -120,6 +129,52 @@ def test_post_json_maps_http_errors(monkeypatch, status, retryable):
         post_json("http://hook", {}, timeout=1)
     assert info.value.retryable is retryable
     assert info.value.retry_after == 2.0
+
+
+@pytest.mark.parametrize("kind", ["webhook", "slack", "lark", "dingtalk", "wecom"])
+@pytest.mark.parametrize("channel_policy", [False, True])
+@pytest.mark.parametrize(
+    ("status", "statuses", "attempts", "sent"),
+    [
+        (418, (418,), 2, 1),
+        (500, (), 1, 0),
+        (500, None, 2, 1),
+        (418, None, 1, 0),
+    ],
+)
+def test_webhook_http_retries_follow_policy(
+    monkeypatch, kind, channel_policy, status, statuses, attempts, sent
+):
+    urlopen = Mock(
+        side_effect=[
+            urllib.error.HTTPError("http://hook", status, "boom", {}, None),
+            io.BytesIO(b"{}"),
+        ]
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    policy = WebhookPolicy(
+        async_send=False,
+        dedup_window=0,
+        rate_limit_per_minute=None,
+        max_retries=1,
+        backoff_initial=0,
+        **({"retry_on_status": statuses} if statuses is not None else {}),
+    )
+    channel = ChannelConfig(
+        type=kind,
+        url="http://hook",
+        policy=policy if channel_policy else None,
+    )
+    dispatcher = Dispatcher(
+        AlertConfig(
+            channels=[channel],
+            default_policy=WebhookPolicy() if channel_policy else policy,
+        )
+    )
+    dispatcher.send(message())
+    assert urlopen.call_count == attempts
+    assert dispatcher.stats()[kind]["sent"] == sent
+    assert dispatcher.stats()[kind]["failed"] == 1 - sent
 
 
 def test_post_json_maps_network_errors(monkeypatch):

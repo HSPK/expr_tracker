@@ -106,6 +106,35 @@ def test_recovery_notification():
     assert h.messages[1].level.value == "info"
 
 
+@pytest.mark.parametrize(
+    ("function", "direction"), [("increasing", 1), ("decreasing", -1)]
+)
+def test_nan_in_trend_window_does_not_recover(function, direction):
+    h = Harness(
+        {
+            "condition": f"{function}(loss[2])",
+            "notify_recovery": True,
+            "cooldown": None,
+        }
+    )
+    h.feed(loss=direction)
+    h.feed(loss=2 * direction)
+    assert len(h.messages) == 1
+    state = next(iter(h.engine.rules.values())).state
+    assert state.firing
+
+    for metric in (float("nan"), 3 * direction, 4 * direction):
+        h.feed(loss=metric)
+        assert state.firing
+        assert state.fires == 1
+        assert len(h.messages) == 1
+
+    h.feed(loss=4 * direction)
+    assert not state.firing
+    assert len(h.messages) == 2
+    assert h.messages[-1].title.startswith("[recovered]")
+
+
 def test_max_fires():
     h = Harness({"condition": "loss > 5", "max_fires": 1})
     for value in (10, 1, 10, 1, 10):

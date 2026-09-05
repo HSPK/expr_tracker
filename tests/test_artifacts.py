@@ -2,12 +2,13 @@
 
 import inspect
 import json
+import multiprocessing
 from pathlib import Path
 
 import pytest
 
 import expr_tracker as et
-from expr_tracker.artifacts import Artifact, ArtifactStore, coerce_artifact
+from expr_tracker.artifacts import Artifact, ArtifactStore, coerce_artifact, file_digest
 from expr_tracker.summary import Summary
 
 
@@ -58,6 +59,62 @@ def test_identical_contents_reuse_a_version(run, payload):
     (payload / "ckpt.pt").write_bytes(b"weights-v2")
     third = et.log_artifact(str(payload / "ckpt.pt"), name="model", type="model")
     assert third.version == 1
+
+
+def _log_shared_artifact(root, source, ready, entered, release):
+    store = ArtifactStore(root)
+    original_entries = store.entries
+
+    def entries():
+        entered.set()
+        if release is not None and not release.wait(10):
+            raise TimeoutError("Artifact publisher was not released")
+        return original_entries()
+
+    store.entries = entries
+    artifact = Artifact("model").add_file(source, name="weights")
+    ready.set()
+    store.log(artifact)
+
+
+@pytest.mark.parametrize("identical", [False, True])
+def test_concurrent_artifact_publishers_share_a_lock(tmp_path, identical):
+    context = multiprocessing.get_context("spawn")
+    root = tmp_path / "artifacts"
+    sources = [tmp_path / "first", tmp_path / "second"]
+    sources[0].write_bytes(b"weights-A")
+    sources[1].write_bytes(b"weights-A" if identical else b"weights-B")
+    ready = [context.Event(), context.Event()]
+    entered = [context.Event(), context.Event()]
+    release = context.Event()
+    processes = [
+        context.Process(
+            target=_log_shared_artifact,
+            args=(root, source, ready[i], entered[i], release if i == 0 else None),
+        )
+        for i, source in enumerate(sources)
+    ]
+    started = []
+    try:
+        processes[0].start()
+        started.append(processes[0])
+        assert entered[0].wait(10)
+        processes[1].start()
+        started.append(processes[1])
+        assert ready[1].wait(10)
+        assert not entered[1].wait(0.2)
+    finally:
+        release.set()
+        for process in started:
+            process.join(10)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+    assert all(process.exitcode == 0 for process in processes)
+    artifacts = ArtifactStore(root).entries()
+    assert [artifact.version for artifact in artifacts] == ([0] if identical else [0, 1])
+    for artifact in artifacts:
+        assert artifact.entries[0].digest == file_digest(artifact.get_path("weights"))
 
 
 def test_use_artifact_resolution(run, payload, tmp_path):

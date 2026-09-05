@@ -8,7 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from ..models import AlertMessage, ChannelConfig
+from ..models import AlertMessage, ChannelConfig, WebhookPolicy
 
 
 class SendError(Exception):
@@ -56,7 +56,12 @@ def create_backend(config: ChannelConfig) -> AlertBackend:
 
 
 def post_json(
-    url: str, payload: dict, timeout: float, headers: dict | None = None
+    url: str,
+    payload: dict,
+    timeout: float,
+    headers: dict | None = None,
+    *,
+    retry_on_status: tuple[int, ...] = WebhookPolicy.retry_on_status,
 ) -> str:
     """POST a JSON body, raising :class:`SendError` on failure."""
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -75,7 +80,7 @@ def post_json(
         )
         raise SendError(
             f"HTTP {e.code} from {_redact(url)}: {e.reason}",
-            retryable=e.code in (408, 429, 500, 502, 503, 504),
+            retryable=e.code in retry_on_status,
             retry_after=retry_after,
         ) from e
     except urllib.error.URLError as e:

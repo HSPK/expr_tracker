@@ -5,7 +5,12 @@ import os
 
 import pytest
 
-from expr_tracker.history import JsonlWriter, read_history, resolve_run_path
+from expr_tracker.history import (
+    HistoryStore,
+    JsonlWriter,
+    read_history,
+    resolve_run_path,
+)
 from expr_tracker.history.writer import MAX_INDEX_ANCHORS
 
 
@@ -149,6 +154,45 @@ def test_resume_detects_out_of_order_steps(writer, tmp_path):
     first.close()
     (tmp_path / "metrics.meta.json").unlink(missing_ok=True)
     assert writer().sorted is False
+
+
+def test_stale_unsorted_sidecar_preserves_unindexed_maximum(writer, tmp_path):
+    first = writer(index_every=2)
+    write_steps(first, [0, 100, 1, 2, 3, 4])
+    first.close()
+    with open(tmp_path / "metrics.jsonl", "ab") as f:
+        f.write(line_for(5))
+
+    store = HistoryStore().init(
+        project="p",
+        name="r",
+        run_dir=str(tmp_path),
+        step_policy="allow",
+        max_open_seconds=None,
+        spans=False,
+    )
+    try:
+        assert store.current_step == 101
+        store.log({"v": 101})
+        assert store.get(1)[0]["_step"] == 101
+        assert store.writer.lines == 8
+    finally:
+        store.finish()
+
+
+def test_truncated_unsorted_sidecar_drops_removed_maximum(writer, tmp_path):
+    first = writer(index_every=2)
+    steps = [0, 10, 1, 2, 100, 3]
+    write_steps(first, steps)
+    first.close()
+    path = tmp_path / "metrics.jsonl"
+    path.write_bytes(b"".join(line_for(step, v=step) for step in steps[:4]))
+
+    resumed = writer(index_every=2)
+
+    assert resumed.max_step == 10
+    assert resumed.lines == 4
+    assert resumed.sorted is False
 
 
 # ------------------------------------------------------------------ write fail

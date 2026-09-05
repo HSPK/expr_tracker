@@ -191,13 +191,19 @@ def _stalled(w: Window, eps: float = 0.0):
 def _increasing(w: Window):
     if not _need(w, 2):
         return UNKNOWN
-    return all(b > a for a, b in itertools.pairwise(w.values))
+    values = w.values
+    if any(not math.isfinite(v) for v in values):
+        return UNKNOWN
+    return all(b > a for a, b in itertools.pairwise(values))
 
 
 def _decreasing(w: Window):
     if not _need(w, 2):
         return UNKNOWN
-    return all(b < a for a, b in itertools.pairwise(w.values))
+    values = w.values
+    if any(not math.isfinite(v) for v in values):
+        return UNKNOWN
+    return all(b < a for a, b in itertools.pairwise(values))
 
 
 # ---------------------------------------------------------------------- scalar
