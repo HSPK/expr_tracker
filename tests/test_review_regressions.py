@@ -385,12 +385,15 @@ def test_concurrent_logging_keeps_row_order_and_history(tmp_path):
         for thread in threads:
             thread.join()
         total = 6 * 150
-        assert [r["_step"] for r in s.get(30)] == list(range(total - 30, total))
-        s.finish()
-        assert [r["_step"] for r in s.get(-1)] == list(range(total))
+        s.flush()
         with open(s.log_fp, "rb") as f:
             steps = [json.loads(line)["_step"] for line in f if line.strip()]
-        assert len(steps) == total
+        assert sorted(steps) == list(range(total))
+        # Threads can emit out of step order; tail selection follows write recency,
+        # while merge mode sorts the selected rows by step.
+        assert [r["_step"] for r in s.get(30)] == sorted(steps[-30:])
+        s.finish()
+        assert [r["_step"] for r in s.get(-1)] == list(range(total))
         # An out-of-order file is only safe because merge mode is switched on
         assert all(b >= a for a, b in itertools.pairwise(steps)) or s._needs_merge
     finally:
