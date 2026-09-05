@@ -99,7 +99,10 @@ def _read_config_file(path: str | Path) -> dict:
     file = Path(path)
     text = file.read_text(encoding="utf-8")
     if file.suffix == ".toml":
-        import tomllib
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib
 
         data = tomllib.loads(text)
     elif file.suffix in (".yaml", ".yml"):

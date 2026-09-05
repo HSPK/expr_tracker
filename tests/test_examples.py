@@ -86,23 +86,28 @@ def run_pipeline(module, tmp_path, **overrides):
     return module.main(flat), tmp_path / "pipeline" / "run"
 
 
-def test_every_worker_gets_its_own_stream(pipeline, tmp_path):
-    from expr_tracker.history import list_streams
+def test_every_active_worker_gets_its_own_stream(pipeline, tmp_path):
+    from expr_tracker.history import list_streams, read_history
 
     _, run_dir = run_pipeline(pipeline, tmp_path)
-    assert sorted(list_streams(run_dir)) == [
-        "producer0",
-        "producer1",
-        "trainer0",
-        "trainer1",
-    ]
+    trainers = {"trainer0", "trainer1"}
+    # A producer that starts after all batches are claimed has no metrics or spans.
+    producers = {
+        f"producer{row['train/from_producer']}"
+        for trainer in trainers
+        for row in read_history(run_dir, -1, stream=trainer)
+    }
+    assert producers
+    assert set(list_streams(run_dir)) == trainers | producers
 
 
-def test_the_trace_has_one_lane_per_worker(pipeline, tmp_path):
-    output, _ = run_pipeline(pipeline, tmp_path)
+def test_the_trace_has_one_lane_per_active_worker(pipeline, tmp_path):
+    from expr_tracker.history import list_streams
+
+    output, run_dir = run_pipeline(pipeline, tmp_path)
     events = json.loads(output.read_text())["traceEvents"]
     names = {e["args"]["name"] for e in events if e.get("name") == "process_name"}
-    assert names == {"producer0", "producer1", "trainer0", "trainer1"}
+    assert names == set(list_streams(run_dir))
 
 
 def test_the_trace_holds_the_whole_span_tree(pipeline, tmp_path):
@@ -135,12 +140,13 @@ def test_the_trainers_consume_exactly_what_they_asked_for(pipeline, tmp_path):
 
 
 def test_the_producers_stop_at_what_was_asked_for(pipeline, tmp_path):
-    from expr_tracker.history import read_history
+    from expr_tracker.history import list_streams, read_history
 
     _, run_dir = run_pipeline(pipeline, tmp_path, **{"--steps": 4})
     made = sum(
         read_history(run_dir, -1, stream=worker)[-1]["produce/made"]
-        for worker in ("producer0", "producer1")
+        for worker in list_streams(run_dir)
+        if worker.startswith("producer")
     )
     assert made == 8  # 4 steps x 2 trainers, no overrun
 
