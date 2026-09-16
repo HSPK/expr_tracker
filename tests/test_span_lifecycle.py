@@ -429,6 +429,7 @@ def test_write_error_sink_cannot_finish_an_unfinished_transaction(run):
 
 def test_config_error_sink_cannot_reenter_initialization(tmp_path):
     script = textwrap.dedent("""
+        import importlib
         import json
         import sys
         from unittest.mock import patch
@@ -436,6 +437,7 @@ def test_config_error_sink_cannot_reenter_initialization(tmp_path):
         from expr_tracker.history import HistoryStore
 
         logger.remove()
+        store_module = importlib.import_module("expr_tracker.history.store")
         history = HistoryStore()
         errors = []
         def sink(message):
@@ -444,7 +446,7 @@ def test_config_error_sink_cannot_reenter_initialization(tmp_path):
             except RuntimeError as error:
                 errors.append(str(error))
         logger.add(sink, level="ERROR")
-        with patch("expr_tracker.history.store.json.dump", side_effect=OSError("config failure")):
+        with patch.object(store_module.json, "dump", side_effect=OSError("config failure")):
             history.init(project="p", name="r", dir=sys.argv[1], config={"value": 1})
         assert errors == ["Cannot reenter history lifecycle operations."]
         history.log({"still_running": 1})
@@ -455,9 +457,9 @@ def test_config_error_sink_cannot_reenter_initialization(tmp_path):
         [sys.executable, "-c", script, str(tmp_path)],
         capture_output=True,
         text=True,
-        check=True,
         timeout=10,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout) == {"complete": True}
 
 
