@@ -73,6 +73,8 @@ class EvalContext:
 def evaluate(node: Node, ctx: EvalContext):
     """Evaluate an AST node to ``float``, ``bool`` or ``UNKNOWN``."""
     if isinstance(node, Literal):
+        if isinstance(node.value, float) and not math.isfinite(node.value):
+            return UNKNOWN
         return node.value
     if isinstance(node, MetricRef):
         return _latest(node.name, ctx)
@@ -115,7 +117,7 @@ def _truth(value):
     if isinstance(value, bool):
         return value
     number = float(value)
-    return UNKNOWN if math.isnan(number) else number != 0
+    return UNKNOWN if not math.isfinite(number) else number != 0
 
 
 def _number(value) -> float:
@@ -256,7 +258,9 @@ def _special(node: Call, ctx: EvalContext):
         threshold = evaluate(node.args[0], ctx)
         if threshold is UNKNOWN:
             return UNKNOWN
-        reference = ctx.last_commit_time or ctx.started_at
+        reference = (
+            ctx.started_at if ctx.last_commit_time is None else ctx.last_commit_time
+        )
         return (ctx.now - reference) >= _number(threshold)
     metric = node.args[0]
     if not isinstance(metric, (MetricRef, RangeRef)):

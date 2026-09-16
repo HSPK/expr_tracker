@@ -88,4 +88,9 @@ def _to_polars(records: list[dict]):
     if not records:
         return pl.DataFrame()
     keys = _ordered_keys(records)
-    return pl.DataFrame([{k: row.get(k) for k in keys} for row in records])
+    # Sparse metrics and floating-point values may first appear after row 100,
+    # beyond Polars' default inference window.
+    return pl.DataFrame(
+        [{k: row.get(k) for k in keys} for row in records],
+        infer_schema_length=None,
+    )

@@ -5,7 +5,7 @@ from expr_tracker.history import HistoryStore
 
 @pytest.fixture
 def store(tmp_path):
-    """A HistoryStore without the open-row timeout, for deterministic tests."""
+    """A HistoryStore that is finished after each test."""
     created = []
 
     def factory(**kwargs):
@@ -14,7 +14,6 @@ def store(tmp_path):
             "project": "p",
             "name": kwargs.pop("name", "run"),
             "dir": str(tmp_path),
-            "max_open_seconds": None,
         }
         options.update(kwargs)
         instance.init(**options)
@@ -38,7 +37,6 @@ def run(tmp_path):
             "name": "run",
             "dir": str(tmp_path),
             "backends": [],
-            "max_open_seconds": None,
         }
         options.update(kwargs)
         return et.init(**options)

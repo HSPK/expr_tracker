@@ -10,6 +10,7 @@ import time
 
 from loguru import logger
 
+from .._process import check_process, process_id
 from .backends import create_backend
 from .backends.base import AlertBackend, SendError
 from .models import AlertConfig, AlertMessage, ChannelConfig, WebhookPolicy
@@ -104,6 +105,7 @@ class Dispatcher:
     """Deliver an :class:`AlertMessage` to every matching channel."""
 
     def __init__(self, config: AlertConfig | None = None):
+        self._owner_pid = process_id()
         config = config or AlertConfig()
         self.enabled = config.enabled
         self.default_policy = config.default_policy
@@ -117,6 +119,7 @@ class Dispatcher:
     # ------------------------------------------------------------------ config
 
     def add_channel(self, config: ChannelConfig):
+        check_process(self._owner_pid)
         policy = config.policy or self.default_policy
         config.policy = policy
         backend = create_backend(config)
@@ -126,15 +129,24 @@ class Dispatcher:
         self.channels[name] = ChannelRuntime(config, backend, policy)
 
     def channel_names(self) -> list[str]:
+        check_process(self._owner_pid)
         return list(self.channels)
+
+    def is_worker_thread(self) -> bool:
+        check_process(self._owner_pid)
+        current = threading.current_thread()
+        with self._lock:
+            return any(runtime.worker is current for runtime in self.channels.values())
 
     @property
     def async_send(self) -> bool:
+        check_process(self._owner_pid)
         return any(rt.policy.async_send for rt in self.channels.values())
 
     # ------------------------------------------------------------------ sending
 
     def send(self, message: AlertMessage, channels: list[str] | None = None):
+        check_process(self._owner_pid)
         if not self.enabled:
             return
         targets = self._resolve(message, channels)
@@ -200,7 +212,7 @@ class Dispatcher:
                 runtime.worker.start()
             if not self._atexit_registered:
                 # Workers are daemon threads: drain the queues at exit or lose alerts
-                atexit.register(self.close)
+                atexit.register(self._atexit)
                 self._atexit_registered = True
 
     def _run(self, runtime: ChannelRuntime):
@@ -277,6 +289,7 @@ class Dispatcher:
     # ------------------------------------------------------------------ lifecycle
 
     def flush(self, timeout: float = 5.0):
+        check_process(self._owner_pid)
         deadline = time.monotonic() + timeout
         for runtime in self.channels.values():
             work = runtime.queue
@@ -291,6 +304,7 @@ class Dispatcher:
                     work.all_tasks_done.wait(remaining)
 
     def close(self, timeout: float = 5.0):
+        check_process(self._owner_pid)
         self.flush(timeout)
         self._stopping.set()
         for runtime in self.channels.values():
@@ -300,10 +314,15 @@ class Dispatcher:
             runtime.worker = None
         with self._lock:
             if self._atexit_registered:
-                atexit.unregister(self.close)
+                atexit.unregister(self._atexit)
                 self._atexit_registered = False
 
+    def _atexit(self):
+        if self._owner_pid == process_id():
+            self.close()
+
     def stats(self) -> dict:
+        check_process(self._owner_pid)
         return {
             name: {
                 "type": rt.config.type,

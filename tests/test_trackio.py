@@ -189,15 +189,16 @@ def test_trackio_and_history_agree_on_steps(tmp_path, fake_trackio):
     run = Run(project="p", name="r", dir=str(tmp_path), backends=["trackio"])
     try:
         for step in range(20):
-            run.log({"loss": float(step)})
             if step % 5 == 0:
                 run.log({"eval": float(step)}, step=step)
+            run.log({"loss": float(step)})
         run.history.flush(commit_open=True)
 
         logged = [call["step"] for name, call in fake_trackio.calls if name == "log"]
         history = [row["_step"] for row in run.history_query(-1)]
         assert set(logged) == set(history)  # no step exists on one side only
         assert len(history) == 20
+        assert [row["loss"] for row in run.history_query(-1)] == list(range(20))
     finally:
         run.finish()
 

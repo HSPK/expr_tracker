@@ -9,6 +9,7 @@ from __future__ import annotations
 import bisect
 import json
 from collections.abc import Iterable, Iterator, Sequence
+from itertools import chain, islice
 from pathlib import Path
 
 from loguru import logger
@@ -25,6 +26,10 @@ class JsonlReader:
     ``index`` is a sparse list of ``(step, line, offset)`` anchors, loaded from the
     meta sidecar or rebuilt by scanning. With ``merge=True`` results are merged by
     ``_step``, which is required for files containing patch lines or out-of-order steps.
+
+    Each read pins a byte prefix before inspecting metadata. Appends become visible
+    to subsequent reads, never halfway through the current read's merge decision.
+    Explicit ``index`` and ``merge`` overrides remain caller-provided hints.
 
     Naming convention: a ``_rows`` suffix means **physical rows, never merged**
     (``tail_rows``, ``parse_rows``); the plain name means **steps**, merged when the
@@ -43,24 +48,61 @@ class JsonlReader:
         self._index = list(index) if index is not None else None
         self._merge = merge
         self._meta_loaded = False
+        self._snapshot_limit: int | None = None
+        self._snapshot_file_size: int | None = None
+        self._cached_snapshot: tuple[int, JsonlReader] | None = None
+
+    def _snapshot(self, end: int | None = None) -> JsonlReader:
+        """A query-local reader whose metadata and data share one byte boundary."""
+        if self._snapshot_limit is not None and (
+            end is None or end >= self._snapshot_limit
+        ):
+            return self
+        size = self.size
+        limit = size if end is None else max(0, min(end, size))
+        source = self
+        cached = self._cached_snapshot
+        if cached is not None and cached[0] >= limit:
+            source = cached[1]
+        reader = JsonlReader(self.path)
+        reader._snapshot_limit = limit
+        reader._snapshot_file_size = (
+            size if self._snapshot_file_size is None else self._snapshot_file_size
+        )
+        reader._index = source._index
+        if reader._index and source._snapshot_limit != limit:
+            reader._index = [entry for entry in reader._index if entry[2] < limit]
+        reader._merge = source._merge
+        reader._meta_loaded = source._meta_loaded
+        self._cached_snapshot = (limit, reader)
+        return reader
 
     # ------------------------------------------------------------------ metadata
 
     @property
     def size(self) -> int:
+        if self._snapshot_limit is not None:
+            return self._snapshot_limit
         return self.path.stat().st_size if self.path.exists() else 0
 
     @property
     def merge(self) -> bool:
+        if self._snapshot_limit is None:
+            return self._snapshot().merge
         if self._merge is None:
             self._load_meta()
         if self._merge is None:
             # Building the index also detects duplicate or out-of-order steps
             _ = self.index
+        if self._merge is None:
+            # Supplied anchors describe locations, not whether steps are unique.
+            self._build_index()
         return bool(self._merge)
 
     @property
     def index(self) -> list[tuple[int, int, int]]:
+        if self._snapshot_limit is None:
+            return self._snapshot().index
         if self._index is None:
             self._load_meta()
         if self._index is None:
@@ -75,10 +117,25 @@ class JsonlReader:
         try:
             with open(meta_path, encoding="utf-8") as f:
                 meta = json.load(f)
-        except Exception:
+        except FileNotFoundError:
             return
-        if meta.get("size") != self.size:
+        except OSError as e:
+            logger.warning(
+                f"Could not read metadata from {meta_path}: {e}; scanning history file."
+            )
+            return
+        except (ValueError, RecursionError) as e:
+            logger.warning(f"Ignoring corrupted metadata in {meta_path}: {e}")
+            return
+        if not isinstance(meta, dict):
+            logger.warning(f"Ignoring malformed metadata in {meta_path}")
+            return
+        size = self.size
+        if meta.get("size") != size:
             return  # stale meta cannot be trusted; fall back to scanning
+        if not _valid_meta(meta, size):
+            logger.warning(f"Ignoring malformed metadata in {meta_path}")
+            return
         if self._index is None:
             self._index = [tuple(e) for e in meta.get("index", [])]
         if self._merge is None:
@@ -91,6 +148,7 @@ class JsonlReader:
         if not self.path.exists():
             return index
         line_no = 0
+        next_anchor = 0
         previous: int | None = None
         duplicates = unsorted = False
         for offset, raw in self._scan():
@@ -102,8 +160,9 @@ class JsonlReader:
                     duplicates = duplicates or step == previous
                     unsorted = unsorted or step < previous
                 previous = step
-                if line_no % every == 0:
+                if line_no >= next_anchor:
                     index.append((step, line_no, offset))
+                    next_anchor = line_no + every
             line_no += 1
         if self._merge is None:
             self._merge = duplicates or unsorted
@@ -117,39 +176,70 @@ class JsonlReader:
         with open(self.path, "rb") as f:
             f.seek(start)
             offset = start
-            for raw in f:
-                if offset >= limit:
+            while offset < limit:
+                raw = f.readline(limit - offset + 1)
+                if not raw:
                     break
+                if offset + len(raw) > limit:
+                    if limit != self._snapshot_file_size:
+                        break
+                    # At the captured EOF, preserve an unterminated row exactly as
+                    # it was, even if an append has since completed or extended it.
+                    raw = raw[: limit - offset]
                 yield offset, raw
                 offset += len(raw)
 
     # ------------------------------------------------------------------ reading
 
     def iter_raw(self, start: int = 0, end: int | None = None) -> Iterator[bytes]:
-        for _, raw in self._scan(start, end):
+        reader = self._snapshot(end)
+        for _, raw in reader._scan(start):
             if raw.strip():
                 yield raw
 
     def tail_raw(self, count: int, end: int | None = None) -> list[bytes]:
         """Read the last ``count`` lines ending before byte offset ``end``."""
-        if count <= 0 or not self.path.exists():
+        if count <= 0:
             return []
-        pos = self.size if end is None else min(end, self.size)
-        chunks: list[bytes] = []
-        newlines = 0
+        lines = list(islice(self._snapshot(end)._reverse_raw(), count))
+        lines.reverse()
+        return lines
+
+    def _reverse_raw(self, end: int | None = None) -> Iterator[bytes]:
+        """Yield nonblank lines backwards, joining long lines only once."""
+        if not self.path.exists():
+            return
+        size = self.size
+        pos = size if end is None else min(end, size)
+        if pos <= 0:
+            return
+        fragments: list[bytes] = []
         with open(self.path, "rb") as f:
-            while pos > 0 and newlines <= count:
+            f.seek(pos - 1)
+            file_size = (
+                size if self._snapshot_file_size is None else self._snapshot_file_size
+            )
+            skip_partial = pos < file_size and f.read(1) != b"\n"
+            while pos > 0:
                 read = min(CHUNK_SIZE, pos)
                 pos -= read
                 f.seek(pos)
-                chunk = f.read(read)
-                chunks.append(chunk)
-                newlines += chunk.count(b"\n")
-        data = b"".join(reversed(chunks))
-        lines = [line for line in data.split(b"\n") if line.strip()]
-        if pos > 0 and lines:
-            lines = lines[1:]  # the first line may be cut by the chunk boundary
-        return lines[-count:]
+                parts = f.read(read).split(b"\n")
+                fragments.append(parts[-1])
+                if len(parts) == 1:
+                    continue
+                raw = b"".join(reversed(fragments))
+                if skip_partial:
+                    skip_partial = False
+                elif raw.strip():
+                    yield raw
+                for raw in reversed(parts[1:-1]):
+                    if raw.strip():
+                        yield raw
+                fragments = [parts[0]]
+        raw = b"".join(reversed(fragments))
+        if not skip_partial and raw.strip():
+            yield raw
 
     def offset_of_step(self, step: int) -> int:
         """Byte offset of the first line with ``_step >= step``, else the file size.
@@ -159,7 +249,8 @@ class JsonlReader:
         The writer guarantees that whenever ``merge`` is false, so callers must use
         :meth:`offset_of_line` in ``merge`` mode.
         """
-        index = self.index
+        reader = self._snapshot()
+        index = reader.index
         start = 0
         if index:
             # The last anchor at or before the step; bisect_left would land one
@@ -167,13 +258,13 @@ class JsonlReader:
             pos = bisect.bisect_right(index, step, key=_anchor_step) - 1
             if pos >= 0:
                 start = index[pos][2]
-        for offset, raw in self._scan(start):
+        for offset, raw in reader._scan(start):
             if not raw.strip():
                 continue
             value = _peek_step(raw)
             if value is not None and value >= step:
                 return offset
-        return self.size
+        return reader.size
 
     def offset_of_line(self, line_no: int) -> int:
         """Byte offset of record ``line_no`` (0-based, blank lines excluded).
@@ -183,7 +274,8 @@ class JsonlReader:
         """
         if line_no <= 0:
             return 0
-        index = self.index
+        reader = self._snapshot()
+        index = reader.index
         start_offset, count = 0, 0
         if index:
             pos = bisect.bisect_right(index, line_no, key=_anchor_line) - 1
@@ -191,13 +283,13 @@ class JsonlReader:
                 _, count, start_offset = index[pos]
         if count >= line_no:
             return start_offset
-        for offset, raw in self._scan(start_offset):
+        for offset, raw in reader._scan(start_offset):
             if not raw.strip():
                 continue
             if count >= line_no:
                 return offset
             count += 1
-        return self.size
+        return reader.size
 
     # ------------------------------------------------------------------ records
 
@@ -212,39 +304,55 @@ class JsonlReader:
         Corrupt lines and rows without an integer ``_step`` are skipped, so every
         record a reader returns can be ordered and merged by step.
         """
-        records = []
+        return list(self._iter_rows(lines))
+
+    def _iter_rows(self, lines: Iterable[bytes]) -> Iterator[dict]:
         for raw in lines:
             try:
                 value = json.loads(raw)
-            except Exception as e:
+            except (ValueError, RecursionError) as e:
                 logger.warning(f"Skipping corrupted line in {self.path}: {e}")
                 continue
             if isinstance(value, dict) and isinstance(value.get("_step"), int):
-                records.append(value)
-        return records
+                yield value
 
     def tail_rows(self, count: int, end: int | None = None) -> list[dict]:
         """The last ``count`` physical rows, unmerged."""
         return self.parse_rows(self.tail_raw(count, end))
 
     def tail(self, count: int, end: int | None = None) -> list[dict]:
-        """The newest ``count`` steps, merged.
+        """The most recently written ``count`` distinct steps, merged and sorted.
 
-        Rows can share a step, so the read widens until one whole extra step is in
-        hand; that spare step is then dropped so the oldest result is never partial.
+        A reverse pass selects the keys. Files requiring a merge then scan forwards
+        for all patches of those keys, retaining only the selected steps.
         """
         if count <= 0:
             return []
-        if not self.merge:
-            return self.tail_rows(count, end)
-        want = count
-        for _ in range(12):
-            rows = self.tail_rows(want, end)
-            merged = merge_steps(rows)
-            if len(rows) < want or len(merged) > count:
-                return merged[-count:]
-            want *= 2
-        return merge_steps(self.tail_rows(want, end))[-count:]
+        reader = self._snapshot(end)
+        if not reader.merge:
+            rows = list(islice(reader._iter_rows(reader._reverse_raw()), count))
+            rows.reverse()
+            return rows
+        return reader.read_selected_steps(reader.select_recent_steps(count))
+
+    def select_recent_steps(
+        self, count: int, end: int | None = None, *, newer: Iterable[int] = ()
+    ) -> set[int]:
+        """Select recent keys, first considering ``newer`` keys in reverse order."""
+        reader = self._snapshot(end)
+        disk_steps = (
+            record["_step"] for record in reader._iter_rows(reader._reverse_raw())
+        )
+        return recent_steps(chain(newer, disk_steps), count)
+
+    def read_selected_steps(
+        self, selected: set[int], end: int | None = None
+    ) -> list[dict]:
+        """Merge every physical row of the selected keys below ``end``."""
+        if not selected:
+            return []
+        reader = self._snapshot(end)
+        return merge_steps(reader._iter_rows(reader.iter_raw()), selected=selected)
 
     def read_steps(
         self, start: int | None, end: int | None, stop_offset: int | None = None
@@ -254,28 +362,30 @@ class JsonlReader:
         ``stop_offset`` bounds the scan, which the live store uses to stay strictly
         below the cache boundary.
         """
+        reader = self._snapshot(stop_offset)
+        merge = reader.merge
         # Unordered files rule out seeking by step or stopping early
-        offset = 0 if (start is None or self.merge) else self.offset_of_step(start)
-        if stop_offset is not None:
-            offset = min(offset, stop_offset)
+        offset = 0 if (start is None or merge) else reader.offset_of_step(start)
         records = []
-        for raw in self.iter_raw(offset, stop_offset):
+        for raw in reader.iter_raw(offset):
             value = _peek_step(raw)
             if value is not None:
-                if end is not None and value >= end and not self.merge:
+                if end is not None and value >= end and not merge:
                     break
                 if (start is not None and value < start) or (
                     end is not None and value >= end
                 ):
                     continue
             records.append(raw)
-        return self.parse(records)
+        return reader.parse(records)
 
     def read_all(self) -> list[dict]:
-        return self.parse(list(self.iter_raw()))
+        reader = self._snapshot()
+        return reader.parse(list(reader.iter_raw()))
 
     def last_record(self) -> dict | None:
-        records = self.parse(self.tail_raw(1))
+        reader = self._snapshot()
+        records = reader.parse(reader.tail_raw(1))
         return records[-1] if records else None
 
     def count_lines(self) -> int:
@@ -290,12 +400,62 @@ def _anchor_line(anchor: tuple[int, int, int]) -> int:
     return anchor[1]
 
 
-def merge_steps(records: Sequence[dict]) -> list[dict]:
+def _valid_meta(meta: dict, size: int) -> bool:
+    if (
+        meta.get("schema") != 2
+        or type(meta.get("size")) is not int
+        or type(meta.get("sorted")) is not bool
+        or type(meta.get("has_duplicate_steps")) is not bool
+        or not isinstance(meta.get("index"), list)
+    ):
+        return False
+    previous_line = previous_offset = -1
+    previous_step: int | None = None
+    for entry in meta["index"]:
+        if (
+            not isinstance(entry, list)
+            or len(entry) != 3
+            or any(type(value) is not int for value in entry)
+        ):
+            return False
+        step, line, offset = entry
+        if line <= previous_line or not previous_offset < offset < size:
+            return False
+        if (
+            meta["sorted"]
+            and previous_step is not None
+            and (
+                step < previous_step
+                or (step == previous_step and not meta["has_duplicate_steps"])
+            )
+        ):
+            return False
+        previous_step, previous_line, previous_offset = step, line, offset
+    return True
+
+
+def recent_steps(steps: Iterable[int], count: int) -> set[int]:
+    """Take distinct keys from a newest-first stream without scanning its suffix."""
+    selected: set[int] = set()
+    if count <= 0:
+        return selected
+    for step in steps:
+        selected.add(step)
+        if len(selected) == count:
+            break
+    return selected
+
+
+def merge_steps(
+    records: Iterable[dict], *, selected: set[int] | None = None
+) -> list[dict]:
     """Merge rows sharing a ``_step`` (last write wins) and sort by step."""
     merged: dict[int, dict] = {}
     for record in records:
         step = record.get("_step")
         if not isinstance(step, int):
+            continue
+        if selected is not None and step not in selected:
             continue
         if step in merged:
             merged[step].update(record)
@@ -307,7 +467,7 @@ def merge_steps(records: Sequence[dict]) -> list[dict]:
 def _peek_step(raw: bytes) -> int | None:
     try:
         value = json.loads(raw)
-    except Exception:
+    except (ValueError, RecursionError):
         return None
     step = value.get("_step") if isinstance(value, dict) else None
     return step if isinstance(step, int) else None

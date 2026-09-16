@@ -11,6 +11,7 @@ from typing import Any
 
 from loguru import logger
 
+from ._process import check_process, process_id
 from .history.codec import RecordCodec
 
 
@@ -22,6 +23,7 @@ class Summary(MutableMapping):
     """
 
     def __init__(self, path: Path | None = None):
+        self._owner_pid = process_id()
         self.path = Path(path) if path is not None else None
         self._values: dict[str, Any] = {}
         self._pinned: set[str] = set()
@@ -42,6 +44,7 @@ class Summary(MutableMapping):
 
     def observe(self, metrics: dict):
         """Record the latest value of each logged metric, skipping pinned keys."""
+        check_process(self._owner_pid)
         if not isinstance(metrics, dict):
             return
         with self._lock:
@@ -53,6 +56,7 @@ class Summary(MutableMapping):
                 self._values[key] = value
 
     def save(self):
+        check_process(self._owner_pid)
         if self.path is None:
             return
         with self._lock:
@@ -61,7 +65,9 @@ class Summary(MutableMapping):
         temporary = self.path.with_suffix(".json.tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(temporary, "w", encoding="utf-8") as f:
+            with open(
+                temporary, "w", encoding="utf-8", errors="backslashreplace"
+            ) as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             os.replace(temporary, self.path)
         except Exception as e:
@@ -70,24 +76,29 @@ class Summary(MutableMapping):
     # ------------------------------------------------------------------ mapping
 
     def __getitem__(self, key: str) -> Any:
+        check_process(self._owner_pid)
         with self._lock:
             return self._values[key]
 
     def __setitem__(self, key: str, value: Any):
+        check_process(self._owner_pid)
         with self._lock:
             self._values[key] = value
             self._pinned.add(key)
 
     def __delitem__(self, key: str):
+        check_process(self._owner_pid)
         with self._lock:
             del self._values[key]
             self._pinned.discard(key)
 
     def __iter__(self) -> Iterator[str]:
+        check_process(self._owner_pid)
         with self._lock:
             return iter(dict(self._values))
 
     def __len__(self) -> int:
+        check_process(self._owner_pid)
         with self._lock:
             return len(self._values)
 

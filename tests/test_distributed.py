@@ -31,7 +31,6 @@ def rank(monkeypatch):
 
 def store_for(tmp_path, name="run", **options):
     store = HistoryStore()
-    options.setdefault("max_open_seconds", None)
     store.init(project="dist", name=name, dir=str(tmp_path), **options)
     return store
 

@@ -10,11 +10,13 @@ list of valid options rather than being silently ignored.
 | `cache_bytes` | 1 GiB | in-memory cache budget, in encoded bytes |
 | `cache_rows` | 2,000,000 | second cache limit, in rows |
 | `alert_window` | 4096 | points kept per metric for alert rules |
-| `max_open_seconds` | 60.0 | commit an idle open row after this long; `None` disables |
 | `step_policy` | `"monotonic"` | `"monotonic"` drops backward steps, `"allow"` keeps them |
 | `rank_aware` | `True` | non-zero ranks write their own shard |
 | `stream` | `None` | an independent producer with its own file and step cursor |
 | `spans` | `True` | write the span tree to `spans.jsonl` beside the metrics |
+| `span_count` | `False` | emit `count/<path>` metrics for completed spans |
+| `span_metrics` | `True` | aggregate span measurements into metric history; disable for trace-only workers |
+| `span_async_write` | `True` | write span records on a reusable background worker instead of the producer thread |
 | `span_print_fn` | `None` | default `print_fn` for every span in the run |
 | `span_plugins` | `()` | default plugins for every span in the run |
 | `print_to_screen` | `False` | print every committed row |
@@ -22,10 +24,12 @@ list of valid options rather than being silently ignored.
 | `buffer_size` | 50 | flush after this many buffered rows |
 | `buffer_interval` | 1.0 | seconds; a gap this long means "low frequency, write now" |
 | `max_buffer_seconds` | 5.0 | force a flush of anything held longer |
-| `max_pending_records` | 100,000 | cap on the backlog when writes are failing |
+| `max_pending_records` | 100,000 | cap on queued plus in-flight records |
+| `max_pending_bytes` | 64 MiB | cap on queued plus in-flight encoded bytes; `None` disables |
+| `max_record_bytes` | 8 MiB | maximum encoded size of one record; `None` disables |
 
 ```python
-et.init(project="p", cache_bytes=256 << 20, max_open_seconds=None, step_policy="allow")
+et.init(project="p", cache_bytes=256 << 20, step_policy="allow")
 ```
 
 ### Write buffering
@@ -36,9 +40,33 @@ low-latency local disks:
 - If more than `buffer_interval` has passed since the last write, treat logging as
   infrequent and write immediately.
 - Otherwise batch, and flush once `buffer_size` rows have accumulated.
-- A background timer flushes anything held longer than `max_buffer_seconds`.
+- A reusable background worker flushes anything held longer than `max_buffer_seconds`.
 - A failed write rolls the batch back and requeues it; `max_pending_records` bounds
   the backlog, dropping the oldest rows if the disk stays unavailable.
+
+When a healthy writer reaches either pending cap, producers wait for capacity
+instead of losing records. Only failure/retry mode drops overflowing queued
+records, with an error log and dropped-record/byte counters.
+
+A record exceeding `max_record_bytes`, or unable to fit into
+`max_pending_bytes` by itself, is rejected immediately with an error. Rejected
+metric rows are not cached or forwarded to backends; their assigned step may be
+skipped. Rejecting an oversized span event does not discard its otherwise valid
+timing metrics.
+
+The byte budget covers encoded queued and in-flight records, not caller-owned
+objects or serialization temporaries. Batch assembly may temporarily allocate
+another buffer of up to the pending-byte budget. Both byte limits must be positive
+integers or `None`.
+
+These settings flush buffered records to disk; they never commit an open metric
+row or advance its step. Open rows have no time limit.
+
+Span file writes are asynchronous by default. `span_async_write=False` preserves
+synchronous writes when a batch is due. Explicit `history.flush()` and `finish()`
+wait for accepted records to be flushed in either mode.
+`et.info()["history"]` reports metric/span `pending_bytes`, `span_pending_bytes`,
+`dropped_records` and `dropped_spans` for diagnosing overload and failed writes.
 
 ## Alert configuration
 

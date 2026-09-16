@@ -152,7 +152,6 @@ def store(tmp_path):
 
     def factory(**options):
         instance = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         instance.init(project="p", name="r", dir=str(tmp_path), **options)
         created.append(instance)
         return instance
@@ -516,7 +515,6 @@ def test_a_slashed_name_fires_a_real_rule(tmp_path):
         name="r",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert={
             "channels": [
                 {

@@ -33,23 +33,19 @@ class RecordCodec:
 
     def encode(self, metrics: dict | None, kind: str = "metric") -> dict:
         """Encode a mapping; one bad value must never drop the whole record."""
-        if not metrics:
+        if metrics is None:
             return {}
         if not isinstance(metrics, dict):
             return {"value": self.encode_value("value", metrics, kind)}
-        try:
-            encoded = jsonable_encoder(metrics)
-            if isinstance(encoded, dict):
-                # jsonable_encoder keeps int/float/bool/None keys verbatim; every
-                # downstream sink assumes str keys, so normalise here
-                return _str_keys(encoded)
-        except Exception:
-            pass
-        # Whole-mapping encoding failed: fall back per field so the rest survives
-        return {
-            encode_key(key): self.encode_value(encode_key(key), value, kind)
-            for key, value in metrics.items()
-        }
+        # Encode each field once: retrying a failed mapping consumes generators
+        # and other one-shot values a second time.
+        encoded = {}
+        for key, value in metrics.items():
+            if isinstance(key, str) and key.startswith("_sa"):
+                continue
+            encoded_key = encode_key(key)
+            encoded[encoded_key] = self.encode_value(encoded_key, value, kind)
+        return encoded
 
     def encode_value(self, key: str, value, kind: str = "metric"):
         try:
@@ -63,15 +59,11 @@ class RecordCodec:
             return fallback_repr(value)
 
 
-def _str_keys(mapping: dict) -> dict:
-    if all(type(key) is str for key in mapping):
-        return mapping
-    return {encode_key(key): value for key, value in mapping.items()}
-
-
 def encode_line(record: dict) -> bytes:
     """Serialise a record as one JSONL line."""
-    return (_LINE_ENCODER.encode(record) + "\n").encode("utf-8")
+    return (_LINE_ENCODER.encode(record) + "\n").encode(
+        "utf-8", errors="backslashreplace"
+    )
 
 
 def fallback_repr(value) -> str:
@@ -90,7 +82,7 @@ def encode_key(key) -> str:
     try:
         encoded = jsonable_encoder(key)
     except Exception:
-        encoded = None
+        return fallback_repr(key)
     if isinstance(encoded, str):
         return encoded
     if isinstance(encoded, int | float | bool) or encoded is None:

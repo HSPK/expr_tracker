@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import sys
 from collections import defaultdict, deque
 from decimal import Decimal
 from enum import Enum
@@ -231,7 +232,7 @@ def jsonable_encoder(
             exclude_none=exclude_none,
             exclude_defaults=exclude_defaults,
         )
-        if "__root__" in obj_dict:
+        if not PYDANTIC_V2 and "__root__" in obj_dict:
             obj_dict = obj_dict["__root__"]
         return jsonable_encoder(
             obj_dict,
@@ -256,13 +257,36 @@ def jsonable_encoder(
             sqlalchemy_safe=sqlalchemy_safe,
         )
     if isinstance(obj, Enum):
-        return obj.value
+        return jsonable_encoder(
+            obj.value,
+            include=include,
+            exclude=exclude,
+            by_alias=by_alias,
+            exclude_unset=exclude_unset,
+            exclude_defaults=exclude_defaults,
+            exclude_none=exclude_none,
+            custom_encoder=custom_encoder,
+            sqlalchemy_safe=sqlalchemy_safe,
+        )
     if isinstance(obj, PurePath):
         return str(obj)
     if isinstance(obj, (str, int, float, type(None))):
         return obj
     if isinstance(obj, UndefinedType):
         return None
+
+    # Objects from optional libraries already have their modules loaded. Avoid
+    # importing either library for ordinary Python metrics.
+    pandas = sys.modules.get("pandas")
+    if pandas is not None and (obj is pandas.NA or obj is pandas.NaT):
+        return None
+    polars = sys.modules.get("polars")
+    if polars is not None:
+        if isinstance(obj, polars.DataFrame):
+            obj = obj.to_dict(as_series=False)
+        elif isinstance(obj, polars.Series):
+            obj = obj.to_list()
+
     if isinstance(obj, dict):
         encoded_dict = {}
         allowed_keys = set(obj.keys())
@@ -284,6 +308,7 @@ def jsonable_encoder(
                     key,
                     by_alias=by_alias,
                     exclude_unset=exclude_unset,
+                    exclude_defaults=exclude_defaults,
                     exclude_none=exclude_none,
                     custom_encoder=custom_encoder,
                     sqlalchemy_safe=sqlalchemy_safe,
@@ -292,6 +317,7 @@ def jsonable_encoder(
                     value,
                     by_alias=by_alias,
                     exclude_unset=exclude_unset,
+                    exclude_defaults=exclude_defaults,
                     exclude_none=exclude_none,
                     custom_encoder=custom_encoder,
                     sqlalchemy_safe=sqlalchemy_safe,
@@ -335,6 +361,11 @@ def jsonable_encoder(
             continue
         if converted is obj:
             break
+        if type(converted) is type(obj):
+            raise ValueError(
+                f"{type(obj).__name__}.{method_name}() did not return a "
+                "JSON-compatible type"
+            )
         return jsonable_encoder(
             converted,
             include=include,

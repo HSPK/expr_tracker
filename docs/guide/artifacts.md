@@ -28,6 +28,9 @@ recorded against it.
 
 Publishers sharing a store serialize version allocation, file copying, and index
 updates with a filesystem lock, including when they run in separate processes.
+On POSIX, filenames represented using Python's filesystem-surrogate characters
+round-trip through artifact indexes and retain distinct digests from literal
+backslash-escape names.
 
 ```python
 a = et.log_artifact("ckpt.pt", name="model")   # v0

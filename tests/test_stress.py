@@ -216,7 +216,7 @@ def test_repeated_run_lifecycles_do_not_leak_threads(tmp_path):
     """200 init/finish cycles must not accumulate timers or writer threads."""
     before = threading.active_count()
     for i in range(200):
-        store = make_store(tmp_path, name=f"run{i}", max_open_seconds=5)
+        store = make_store(tmp_path, name=f"run{i}")
         store.log({"loss": 1.0}, step=0)
         store.finish()
     time.sleep(0.5)
@@ -224,8 +224,8 @@ def test_repeated_run_lifecycles_do_not_leak_threads(tmp_path):
 
 
 def test_alternating_commit_modes_keep_steps_unique(tmp_path):
-    """Mixing implicit, explicit and timed-out commits still yields unique steps."""
-    store = make_store(tmp_path, max_open_seconds=0.01, buffer_size=8)
+    """Mixing implicit, explicit and flush commits still yields unique steps."""
+    store = make_store(tmp_path, buffer_size=8)
     try:
         for step in range(1_000):
             mode = step % 4
@@ -236,7 +236,7 @@ def test_alternating_commit_modes_keep_steps_unique(tmp_path):
                 store.log({"c": step})
             elif mode == 2:
                 store.log({"d": step}, step=store.current_step)
-                time.sleep(0.02)  # let the open-row timer fire
+                store.flush(commit_open=True)
                 store.log({"e": step}, step=store.current_step)
             else:
                 store.log({"f": step}, commit=True)

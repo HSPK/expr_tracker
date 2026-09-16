@@ -64,7 +64,9 @@ def post_json(
     retry_on_status: tuple[int, ...] = WebhookPolicy.retry_on_status,
 ) -> str:
     """POST a JSON body, raising :class:`SendError` on failure."""
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    data = json.dumps(payload, ensure_ascii=False).encode(
+        "utf-8", errors="backslashreplace"
+    )
     request = urllib.request.Request(
         url,
         data=data,

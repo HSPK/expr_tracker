@@ -21,7 +21,6 @@ def run(tmp_path):
         options.setdefault("name", "run")
         options.setdefault("dir", str(tmp_path))
         options.setdefault("backends", [])
-        options.setdefault("max_open_seconds", None)
         created.append(et.init(**options))
         return created[-1]
 

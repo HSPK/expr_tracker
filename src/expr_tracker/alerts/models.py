@@ -113,7 +113,7 @@ class AlertMessage:
         if self.dedup_key:
             return self.dedup_key
         raw = f"{self.source or ''}|{self.title}|{self.level.value}"
-        return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+        return hashlib.sha1(raw.encode("utf-8", errors="surrogatepass")).hexdigest()
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -207,6 +207,9 @@ class ChannelConfig:
         return not (self.tags and not set(self.tags) & set(message.tags))
 
 
+DEFAULT_RULE_MESSAGE = "{name} triggered at step {step}: {expr}"
+
+
 @dataclass
 class AlertRule:
     condition: str
@@ -236,7 +239,7 @@ class AlertRule:
         if not self.name:
             self.name = f"rule_{self._auto_digest()}"
         if not self.message:
-            self.message = "{name} triggered at step {step}: {expr}"
+            self.message = DEFAULT_RULE_MESSAGE
 
     def _auto_digest(self) -> str:
         """Digest everything that makes two rules different alerts.
@@ -249,7 +252,7 @@ class AlertRule:
             [
                 self.condition,
                 self.level.value,
-                self.message,
+                "" if self.message == DEFAULT_RULE_MESSAGE else self.message,
                 self.title or "",
                 self.mode,
                 str(self.for_steps),
@@ -257,7 +260,9 @@ class AlertRule:
                 ",".join(self.tags),
             ]
         )
-        return hashlib.sha1(identity.encode("utf-8")).hexdigest()[:8]
+        return hashlib.sha1(
+            identity.encode("utf-8", errors="surrogatepass")
+        ).hexdigest()[:8]
 
     @classmethod
     def from_dict(cls, data: dict) -> AlertRule:

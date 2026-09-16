@@ -34,7 +34,6 @@ def make(tmp_path):
 
     def factory(name="run", **options):
         store = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         store.init(project="cache", name=name, dir=str(tmp_path), **options)
         created.append(store)
         return store
@@ -293,7 +292,7 @@ def test_a_cache_large_enough_never_reports_a_disk_prefix(make):
 
 def test_patched_steps_survive_eviction(make):
     """A step split across two rows must merge correctly after eviction."""
-    store = make(cache_bytes=1, max_open_seconds=None)
+    store = make(cache_bytes=1)
     store.log({"a": 1}, step=0, commit=True)
     store.log({"b": 2}, step=0, commit=True)  # a patch line for step 0
     fill(store, 30, start=1)

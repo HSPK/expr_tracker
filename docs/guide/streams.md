@@ -14,9 +14,37 @@ et.init(project="llm", name="sft-1", stream="data")
 et.log({"data/produce_ms": 12.4})               # its own steps 0, 1, 2, ...
 ```
 
-Without this, both producers share one cursor: their steps interleave, the merge
-puts unrelated metrics on one row, and `step_policy="monotonic"` drops whichever
-producer happens to fall behind.
+Without this, independent cursors write the same files: steps collide and reads
+can merge unrelated metrics into one row. `step_policy` does not coordinate
+writers in different processes.
+
+## Forked workers
+
+Initialize a separate run in each worker with its own stream or run directory.
+After `fork`, the inherited global run is discarded with a warning on first use;
+span stacks and global tracker/plugin locks are reset in the child. Directly
+using a parent's Run, HistoryStore, Span or plugin raises `RuntimeError` before
+touching inherited locks. Parent exit hooks do not flush into its files from the
+child.
+
+```python
+def worker(worker_id):
+    et.init(
+        project="llm", name="sft-1", stream=f"data-{worker_id}",
+        backends=[], span_metrics=False,
+    )
+    try:
+        with et.span("produce"):
+            produce_batch()
+    finally:
+        et.finish()
+```
+
+Create resource plugins inside the worker as well. Prefer multiprocessing
+`spawn` when using CUDA: tracker isolation does not make the CUDA runtime
+fork-safe.
+Fork outside logging callbacks; third-party logging libraries may acquire their
+own sink locks in pre-fork handlers, which tracker child-state reset cannot fix.
 
 ## Layout
 
@@ -136,9 +164,9 @@ every 100 steps, say — you do not need a stream. Log with the training step an
 the sparse metric simply appears on the steps where you logged it:
 
 ```python
-et.log({"train/loss": loss})
 if step % 100 == 0:
     et.log({"eval/acc": acc}, step=step)
+et.log({"train/loss": loss}, step=step, commit=True)
 ```
 
 Window functions already work on that, because `eval.acc[20]` counts points of

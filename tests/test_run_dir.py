@@ -19,7 +19,6 @@ def run(tmp_path):
     created = []
 
     def factory(**options):
-        options.setdefault("max_open_seconds", None)
         created.append(
             et.init(project="proj", name="job", backends=[], resume="allow", **options)
         )
@@ -122,7 +121,7 @@ def test_a_resume_says_where_it_picked_up(tmp_path):
     from loguru import logger
 
     first = HistoryStore()
-    first.init(project="proj", name="job", dir=str(tmp_path), max_open_seconds=None)
+    first.init(project="proj", name="job", dir=str(tmp_path))
     first.log({"loss": 1.0})
     first.finish()
 
@@ -205,7 +204,6 @@ def test_streams_and_ranks_still_work_in_a_named_run_dir(tmp_path, monkeypatch):
         run_dir=str(target),
         backends=[],
         stream="data",
-        max_open_seconds=None,
     )
     try:
         instance.log({"rows": 1})

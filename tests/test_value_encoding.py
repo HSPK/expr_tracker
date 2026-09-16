@@ -24,7 +24,6 @@ def store(tmp_path):
 
     def factory(**options):
         instance = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         instance.init(
             project="enc", name=options.pop("name", "r"), dir=str(tmp_path), **options
         )
@@ -108,7 +107,6 @@ def test_numpy_values_are_visible_to_alert_rules(tmp_path):
         name="numpy-alert",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert={
             "channels": [
                 {
@@ -222,7 +220,6 @@ def test_a_pydantic_model_works_as_the_run_config(tmp_path):
         name="pyd",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         config=Config(lr=0.5),
     )
     try:
@@ -241,7 +238,6 @@ def test_a_pydantic_model_in_the_summary(tmp_path):
         name="pydsum",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=False or None,
     )
     try:
         run.summary["config"] = Config()
@@ -279,7 +275,7 @@ def test_a_key_colliding_after_stringification_keeps_one_value(store):
 @pytest.fixture
 def populated(tmp_path):
     run = et.init(
-        project="enc", name="out", dir=str(tmp_path), backends=[], max_open_seconds=None
+        project="enc", name="out", dir=str(tmp_path), backends=[]
     )
     for step in range(10):
         run.log({"loss": float(step), "lr": 0.1})

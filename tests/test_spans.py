@@ -38,7 +38,6 @@ def run(tmp_path):
     created = []
 
     def factory(**options):
-        options.setdefault("max_open_seconds", None)
         created.append(
             et.init(
                 project="sp",
@@ -77,7 +76,7 @@ def test_a_span_records_its_duration_as_a_metric(run):
         time.sleep(0.01)
     values = metrics_of(instance)
     assert values[timed("forward")] >= 9.0
-    assert values[counted("forward")] == 1
+    assert counted("forward") not in values
 
 
 def test_a_span_returns_its_duration(run):
@@ -88,22 +87,20 @@ def test_a_span_returns_its_duration(run):
     assert span.name == "forward" and span.path == "forward"
 
 
-def test_nested_spans_join_their_names(run):
-    instance = run()
+@pytest.mark.parametrize("span_count", [False, True])
+def test_nested_spans_join_their_names(run, span_count):
+    instance = run(span_count=span_count)
     with et.span("forward"):
         with et.span("attention"):
             time.sleep(0.004)
         with et.span("mlp"):
             time.sleep(0.002)
     values = metrics_of(instance)
-    assert set(values) == {
-        timed("forward"),
-        counted("forward"),
-        timed("forward/attention"),
-        counted("forward/attention"),
-        timed("forward/mlp"),
-        counted("forward/mlp"),
-    }
+    paths = ["forward", "forward/attention", "forward/mlp"]
+    expected = {timed(path) for path in paths}
+    if span_count:
+        expected.update(counted(path) for path in paths)
+    assert set(values) == expected
 
 
 def test_a_parent_covers_its_children(run):
@@ -135,18 +132,23 @@ def test_the_same_name_under_different_parents_stays_distinct(run):
 # ------------------------------------------------------------------ aggregation
 
 
-def test_repeated_spans_sum_and_count(run):
-    instance = run()
+@pytest.mark.parametrize("span_count", [False, True])
+@pytest.mark.parametrize("spans", [False, True])
+def test_repeated_spans_sum_and_optionally_count(run, span_count, spans):
+    instance = run(span_count=span_count, spans=spans)
     for _ in range(4):
         with et.span("layer"):
             time.sleep(0.002)
     values = metrics_of(instance)
-    assert values[counted("layer")] == 4
+    if span_count:
+        assert values[counted("layer")] == 4
+    else:
+        assert counted("layer") not in values
     assert values[timed("layer")] >= 7.0  # summed, not overwritten
 
 
 def test_aggregation_resets_between_steps(run):
-    instance = run()
+    instance = run(span_count=True)
     for _ in range(3):
         with et.span("layer"):
             pass
@@ -178,6 +180,53 @@ def test_spans_and_metrics_share_one_row(run):
     rows = instance.history_query(-1)
     assert len(rows) == 1
     assert rows[0]["loss"] == 0.5 and timed("forward") in rows[0]
+
+
+def test_spans_reuse_an_explicit_open_step(run, tmp_path):
+    instance = run()
+    et.log({"loss": 1.0}, step=10)
+    with et.span("outer"), et.span("inner"):
+        pass
+    assert instance.step == 10
+    assert instance.history_query(-1, include_open=False) == []
+    et.log({"accuracy": 0.5})
+    assert instance.step == 11
+    et.finish()
+
+    rows = instance.history_query(-1)
+    assert len(rows) == 1 and rows[0]["_step"] == 10
+    assert rows[0]["loss"] == 1.0 and rows[0]["accuracy"] == 0.5
+    assert timed("outer") in rows[0] and timed("outer/inner") in rows[0]
+    assert [record["_step"] for record in spans_of(tmp_path)] == [10, 10]
+
+
+def test_a_span_uses_the_step_at_end_not_at_start(run, tmp_path):
+    instance = run()
+    with et.span("outer"):
+        with et.span("inner"):
+            pass
+        et.log({})
+    et.finish()
+
+    records = spans_of(tmp_path)
+    assert [(record["name"], record["_step"]) for record in records] == [
+        ("outer/inner", 0),
+        ("outer", 1),
+    ]
+    rows = instance.history_query(-1)
+    assert timed("outer/inner") in rows[0] and timed("outer") not in rows[0]
+    assert timed("outer") in rows[1] and timed("outer/inner") not in rows[1]
+
+
+def test_step_is_an_attribute_not_a_span_step_override(run, tmp_path):
+    instance = run()
+    with et.span("work", step=99):
+        pass
+    assert instance.step == 0
+    et.finish()
+    record = spans_of(tmp_path)[0]
+    assert record["_step"] == 0
+    assert record["args"] == {"step": 99}
 
 
 # ------------------------------------------------------------------ forms
@@ -240,7 +289,7 @@ def test_the_manual_form_spans_scopes(run):
 
 
 def test_ending_twice_is_harmless(run):
-    instance = run()
+    instance = run(span_count=True)
     span = et.start_span("once")
     first = span.end()
     assert span.end() == first
@@ -272,6 +321,50 @@ def test_a_span_without_attributes_has_no_args_key(run, tmp_path):
 
 
 # ------------------------------------------------------------------ span file
+
+
+@pytest.mark.parametrize("stream", [None, "worker"])
+def test_span_timer_flushes_without_committing_metrics(run, tmp_path, stream):
+    instance = run(
+        stream=stream, buffer_size=1000, buffer_interval=None, max_buffer_seconds=0.02
+    )
+    with et.span("first"):
+        pass
+    instance.history.flush()
+    writer = instance.history.span_writer
+    with et.span("last"):
+        pass
+    deadline = time.monotonic() + 2
+    while writer.lines < 2 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert writer.lines == 2, "the last span stayed buffered while the process was idle"
+    assert [record["name"] for record in spans_of(tmp_path, stream=stream)] == [
+        "first",
+        "last",
+    ]
+    assert writer.buffer == []
+    assert instance.step == 0
+    assert instance.history_query(-1, include_open=False) == []
+    assert instance.info()["history"]["rows_on_disk"] == 0
+
+
+def test_span_flush_timer_can_be_disabled(run, tmp_path):
+    instance = run(
+        buffer_size=1000,
+        buffer_interval=None,
+        max_buffer_seconds=None,
+        span_async_write=False,
+    )
+    with et.span("first"):
+        pass
+    with et.span("last"):
+        pass
+    writer = instance.history.span_writer
+    assert len(spans_of(tmp_path)) == 1
+    assert len(writer.buffer) == 1
+    instance.history.flush()
+    assert len(spans_of(tmp_path)) == 2
+    assert instance.step == 0
 
 
 def test_the_span_file_records_the_tree(run, tmp_path):
@@ -424,7 +517,7 @@ def test_concurrent_tasks_do_not_nest(run):
 
 
 def test_many_threads_record_every_span(run):
-    instance = run()
+    instance = run(span_count=True)
 
     def worker(index):
         for _ in range(20):
@@ -472,7 +565,6 @@ def test_a_span_metric_is_usable_in_an_alert_rule(tmp_path):
         name="alerting",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert={
             "channels": [
                 {
@@ -504,7 +596,7 @@ def test_a_span_metric_is_usable_in_an_alert_rule(tmp_path):
 def test_record_span_accumulates_without_the_encoder(tmp_path):
     """Span metrics are built from floats here, so they bypass the codec."""
     store = HistoryStore()
-    store.init(project="sp", name="direct", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="sp", name="direct", dir=str(tmp_path))
     try:
         store.record_span({"a/duration_ms": 1.5, "a/count": 1}, None)
         store.record_span({"a/duration_ms": 2.5, "a/count": 1}, None)
@@ -517,7 +609,7 @@ def test_record_span_accumulates_without_the_encoder(tmp_path):
 
 def test_accumulate_replaces_a_non_numeric_value(tmp_path):
     store = HistoryStore()
-    store.init(project="sp", name="mixed", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="sp", name="mixed", dir=str(tmp_path))
     try:
         store.log({"a": "text"}, commit=False)
         store.record_span({"a": 1.0}, None)
@@ -529,7 +621,7 @@ def test_accumulate_replaces_a_non_numeric_value(tmp_path):
 
 def test_a_span_record_that_cannot_be_serialised_is_dropped(tmp_path):
     store = HistoryStore()
-    store.init(project="sp", name="bad", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="sp", name="bad", dir=str(tmp_path))
     try:
         store.record_span({"a/duration_ms": 1.0}, {"name": "a", "args": {1: object()}})
         store.log({"loss": 1.0})
@@ -546,13 +638,53 @@ def test_the_spans_file_is_named_beside_the_metrics():
 
 def test_reinitialising_closes_the_span_writer(tmp_path):
     store = HistoryStore()
-    store.init(project="sp", name="a", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="sp", name="a", dir=str(tmp_path))
     store.record_span({"x/duration_ms": 1.0}, {"name": "x"})
     first = store.span_writer
-    store.init(project="sp", name="b", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="sp", name="b", dir=str(tmp_path))
     try:
         assert store.span_writer is not first
         assert (Path(tmp_path) / "sp" / "a" / "spans.jsonl").exists()
+    finally:
+        store.finish()
+
+
+@pytest.mark.parametrize("same_run", [False, True])
+def test_reinitialising_saves_the_open_row_with_its_original_run(tmp_path, same_run):
+    store = HistoryStore()
+    seen = []
+    store.init(
+        project="sp",
+        name="a",
+        dir=str(tmp_path),
+        stream="worker",
+        on_commit=lambda row: seen.append(
+            (store.name, store.stream, store.log_dir, dict(row))
+        ),
+        buffer_interval=None,
+        max_buffer_seconds=None,
+    )
+    old_dir, old_metrics, old_spans = store.log_dir, store.log_fp, store.spans_fp
+    store.log({"loss": 1.0}, step=10)
+    store.record_span({timed("work"): 2.0}, {"name": "work", "dur_ms": 2.0})
+    store.record_span({timed("work"): 3.0}, {"name": "work", "dur_ms": 3.0})
+    assert seen == []
+    store.init(
+        project="sp",
+        name="a" if same_run else "b",
+        dir=str(tmp_path),
+        stream="worker" if same_run else None,
+    )
+    try:
+        rows = [json.loads(line) for line in old_metrics.read_text().splitlines()]
+        assert len(rows) == 1
+        assert rows[0]["_step"] == 10 and rows[0][timed("work")] == 5.0
+        assert rows[0]["loss"] == 1.0
+        assert seen == [("a", "worker", old_dir, rows[0])]
+        assert len(old_spans.read_text().splitlines()) == 2
+        assert store.current_step == (11 if same_run else 0)
+        if not same_run:
+            assert store.get(-1) == []
     finally:
         store.finish()
 
@@ -641,7 +773,7 @@ def test_the_track_is_recorded(run, tmp_path):
 
 
 def test_a_timing_is_named_measurement_first(run):
-    instance = run()
+    instance = run(span_count=True)
     with et.span("forward"), et.span("attention"):
         pass
     values = metrics_of(instance)
@@ -652,7 +784,7 @@ def test_a_timing_is_named_measurement_first(run):
 
 def test_timings_never_land_in_a_metric_group_of_yours(run):
     """A span called `train` must not file its duration beside train/loss."""
-    instance = run()
+    instance = run(span_count=True)
     with et.span("train"):
         pass
     instance.log({"train/loss": 1.0, "train/lr": 3e-4})
@@ -692,7 +824,7 @@ def test_a_plugin_metric_gets_its_own_group_too(run):
 
 def test_the_name_helper_is_what_the_store_records(run):
     """The helper is the contract; nothing should build these names by hand."""
-    instance = run()
+    instance = run(span_count=True)
     with et.span("a/b"):  # a slash in a name is part of the path, not a level
         pass
     values = metrics_of(instance)

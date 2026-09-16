@@ -58,7 +58,7 @@ Run.log ──> Summary.observe(data)          # last value per metric
         └──> HistoryStore.log
                  │  encode once (jsonable_encoder)
                  │  merge into the open row for the current step
-                 ▼  commit when the step advances / commit=True / finish / timeout
+                 ▼  commit when the step advances / commit=True / finish / flush(commit_open=True)
              HistoryStore._emit
                  ├── _store_row(record, line)         (holds the store lock)
                  │      ├── cache.append((row, step, line))  # ordinal allocated here
@@ -125,12 +125,13 @@ plain functions over a sequence, so they hold no lock and are tested directly.
 
 ### Rows versus steps
 
-A step normally occupies one physical row, but a `max_open_seconds` timeout followed
-by more data for that step writes a *patch line*, so one step can span several rows.
+A step normally occupies one physical row, but an explicit commit followed by
+more data for that step writes a *patch line*, so one step can span several rows.
 The two are kept strictly separate in the read path:
 
-* `JsonlReader.tail_rows(n)` returns **physical rows**; `JsonlReader.tail(n)` returns
-  **merged steps** and widens its own read until it has one whole step to spare.
+* `JsonlReader.tail_rows(n)` returns **physical rows**; `JsonlReader.tail(n)` selects
+  the most recently written **steps** and merges all their patches. Unique-step
+  files use reverse reads; arbitrary patch histories require scanning older data.
 * `HistoryStore._collect_tail(steps)` works in rows, then `_take_steps` merges and
   trims by *step*, so `get(n)` never returns a half-merged oldest row.
 * The cache stores each row's step next to its bytes, so `_view_tail` snapshots the
@@ -156,16 +157,38 @@ Disk fallback only happens once rows have been evicted or the run was resumed;
 
 | Lock / thread | Owner | Protects |
 | --- | --- | --- |
-| `HistoryStore._lock` (RLock) | store | open row, cache, series, row ordinal, writer enqueue |
+| `HistoryStore._lifecycle_lock` | store | reinitialization and shutdown |
+| `HistoryStore._write_lock` (RLock) | store | accepted write transactions and row admission |
+| `HistoryStore._lock` (RLock) | store | open row, cache, series and row ordinal |
+| notification condition | store | ordered commit tickets, delivery ownership and completion |
 | `JsonlWriter._lock` (RLock) | writer | buffer, index, meta fields |
 | `JsonlWriter._write_lock` | writer | batch swap + file append (ordering) |
-| open-row `threading.Timer` | store | commits a stale open row; carries a generation token |
-| buffer `threading.Timer` | writer | flushes records that sat in memory too long |
+| reusable writer worker | writer | asynchronous span writes and timed buffer flushing; drained at shutdown |
 | `CompiledRule.lock` | engine | one rule's state machine transitions |
 | dispatch worker thread | dispatcher | drains the send queue; drained at exit |
 | watchdog thread | engine | evaluates time-based rules when no logs arrive |
 
-Lock order is always `_write_lock` → `_lock`; nothing acquires them the other way.
+Store writes enter the transaction lock before the store-state lock. Shutdown
+rejects new writes, waits for accepted metric/span transactions, then flushes and
+closes the writers before closing downstream sinks. Writer workers never acquire
+store locks. Open rows have no timeout and no background commit thread.
+Admission waits outside the store-state lock, so queue backpressure does not
+block history reads. Rejected records do not consume cache row ordinals or reach
+commit callbacks.
+Read snapshots acquire the metric writer lock before the store-state lock, the
+same order used when writer error handlers inspect history.
+
+Commit notifications are staged in write order, then delivered after releasing
+transaction/state locks. Committing callers wait for their own tickets; span-only
+writes do not wait for unrelated callbacks. Delivery is serial and supports
+recursive logging/flush, while lifecycle operations are rejected inside callbacks.
+Reinitialization drains the old run's notifications before replacing its metadata.
+Alert-series updates occur during ordered delivery, not admission, preventing
+queued future rows from changing an earlier notification's scalar/window results.
+
+Run/store/span/plugin objects are process-owned. Fork resets process-global
+locks and the active run/stack in the child; inherited objects are rejected before
+acquiring their locks, and inherited exit hooks do not flush parent data.
 
 ## Extension points
 

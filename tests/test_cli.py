@@ -21,7 +21,7 @@ def runner(monkeypatch, tmp_path):
 def run_dir(tmp_path):
     """A finished run with predictable metrics."""
     store = HistoryStore()
-    store.init(project="p", name="r", dir=str(tmp_path), max_open_seconds=None)
+    store.init(project="p", name="r", dir=str(tmp_path))
     for step in range(10):
         payload = {"loss": 1.0 / (step + 1), "lr": 0.1}
         if step % 3 == 0:
@@ -50,7 +50,6 @@ def streamed_run_dir(tmp_path):
             name="s",
             dir=str(tmp_path),
             stream=stream,
-            max_open_seconds=None,
         )
         for step in range(4):
             store.log({metric: float(step)})
@@ -250,7 +249,9 @@ def test_alert_loads_dotenv_before_resolving_channels(runner, monkeypatch, tmp_p
         encoding="utf-8",
     )
     configs = []
-    monkeypatch.setattr(cli, "send_alert", lambda **kwargs: configs.append(load_config()))
+    monkeypatch.setattr(
+        cli, "send_alert", lambda **kwargs: configs.append(load_config())
+    )
 
     invoke(runner, "alert", "hello")
 
@@ -409,3 +410,139 @@ def test_rules_help_lists_subcommands(runner):
 
 def test_an_unknown_command_fails(runner):
     assert runner.invoke(cli.main, ["nope"]).exit_code != 0
+
+
+# ------------------------------------------------------------------ trace ranges
+
+
+@pytest.mark.parametrize(
+    ("option", "spec"),
+    [
+        ("--time-range", "abc"),
+        ("--time-range", "1"),
+        ("--time-range", "1:2:3"),
+        ("--time-range", "nan:2"),
+        ("--time-range", ":inf"),
+        ("--time-range", "-inf:"),
+        ("--time-range", "1e999:"),
+        ("--step-range", "1"),
+        ("--step-range", "1.5:2"),
+        ("--step-range", "x:y"),
+        ("--step-range", "1:2:3"),
+    ],
+)
+def test_trace_range_errors_are_actionable(runner, tmp_path, option, spec):
+    output = tmp_path / "out.json"
+    result = runner.invoke(
+        cli.main, ["trace", str(tmp_path), "-o", str(output), option, spec]
+    )
+    assert result.exit_code == 2
+    assert option in result.output and "start:end" in result.output
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("100.5:102", 2),
+        (":100.5", 1),
+        ("102:", 2),
+        (":", 3),
+        ("102:102", 0),
+        ("103:102", 0),
+    ],
+)
+def test_trace_accepts_epoch_time_ranges_and_combines_step_filter(
+    runner, tmp_path, spec, expected
+):
+    source = tmp_path / "spans.jsonl"
+    records = [
+        {"start": 100, "dur_ms": 1000, "_step": 0},
+        {"start": 101, "dur_ms": 2000, "_step": 0},
+        {"start": 103, "dur_ms": 500, "_step": 1},
+        {"start": 104, "dur_ms": 500, "_step": 0},
+    ]
+    source.write_text("".join(json.dumps(record) + "\n" for record in records))
+    output = tmp_path / "out.json"
+    result = invoke(
+        runner,
+        "trace",
+        str(source),
+        "-o",
+        str(output),
+        "--time-range",
+        spec,
+        "--step-range",
+        "0:1",
+    )
+    assert f"wrote {expected} span(s)" in result
+    assert (
+        len(
+            [
+                event
+                for event in json.loads(output.read_text())["traceEvents"]
+                if event["ph"] == "X"
+            ]
+        )
+        == expected
+    )
+
+
+def test_trace_help_describes_absolute_overlap_filter(runner):
+    output = invoke(runner, "trace", "--help")
+    assert "--time-range" in output
+    assert "epoch seconds" in output
+    assert "overlapping spans" in " ".join(output.split())
+    assert "--temp-dir" in output
+
+
+def test_trace_forwards_the_spool_directory(runner, tmp_path, monkeypatch):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    seen = []
+
+    def export(*args, **kwargs):
+        seen.append(kwargs["temp_dir"])
+        return 0
+
+    monkeypatch.setattr(cli, "write_trace", export)
+    assert "wrote 0 span(s)" in invoke(
+        runner, "trace", str(tmp_path), "--temp-dir", str(scratch)
+    )
+    assert seen == [scratch]
+
+
+@pytest.mark.parametrize("exists_as_file", [False, True])
+def test_trace_rejects_invalid_spool_directories(runner, tmp_path, exists_as_file):
+    scratch = tmp_path / "scratch"
+    if exists_as_file:
+        scratch.write_text("not a directory")
+    result = runner.invoke(
+        cli.main, ["trace", str(tmp_path), "--temp-dir", str(scratch)]
+    )
+    assert result.exit_code == 2
+    assert "--temp-dir" in result.output
+
+
+@pytest.mark.parametrize("failure", [OSError("permission denied"), ValueError("bad timestamps")])
+def test_trace_export_errors_are_actionable(runner, tmp_path, monkeypatch, failure):
+    def export(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(cli, "write_trace", export)
+    result = runner.invoke(cli.main, ["trace", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Trace export failed" in result.output
+    assert str(failure) in result.output
+
+
+def test_trace_sqlite_storage_failure_is_actionable(runner, tmp_path, monkeypatch):
+    import sqlite3
+
+    def export(*args, **kwargs):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(cli, "write_trace", export)
+    result = runner.invoke(cli.main, ["trace", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "database or disk is full" in result.output

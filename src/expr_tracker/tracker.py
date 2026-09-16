@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
+from ._process import register_fork_reset
 from .artifacts import Artifact
 from .history import read_history
 from .run import Run, current_run, require_run, set_run
@@ -16,6 +17,14 @@ Tracker = Run
 
 
 _lifecycle = threading.RLock()
+
+
+def _reset_after_fork():
+    global _lifecycle
+    _lifecycle = threading.RLock()
+
+
+register_fork_reset(_reset_after_fork)
 
 
 def init(
@@ -42,8 +51,11 @@ def init(
     outright.
 
     Extra keyword arguments are forwarded to the history store (``cache_bytes``,
-    ``alert_window``, ``max_open_seconds``, ``step_policy``, ``buffer_size``, ...).
+    ``alert_window``, ``step_policy``, ``buffer_size``, ...).
     """
+    active = current_run()
+    if active is not None:
+        active._require_shutdown_context()
     # Check, construct and publish atomically: concurrent init would race otherwise
     with _lifecycle:
         if current_run() is not None:
@@ -140,6 +152,9 @@ def history(
 
 def finish(exit_code: int | None = None, quiet: bool | None = None):
     """Close the active run. ``exit_code``/``quiet`` exist for wandb compatibility."""
+    active = current_run()
+    if active is not None:
+        active._require_shutdown_context()
     with _lifecycle:
         run = require_run()
         try:

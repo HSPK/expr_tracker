@@ -168,7 +168,6 @@ def test_stale_unsorted_sidecar_preserves_unindexed_maximum(writer, tmp_path):
         name="r",
         run_dir=str(tmp_path),
         step_policy="allow",
-        max_open_seconds=None,
         spans=False,
     )
     try:

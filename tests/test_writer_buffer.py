@@ -18,7 +18,7 @@ def count_lines(path):
 def make(tmp_path, name, **kwargs):
     store = HistoryStore()
     store.init(
-        project="p", name=name, dir=str(tmp_path), max_open_seconds=None, **kwargs
+        project="p", name=name, dir=str(tmp_path), **kwargs
     )
     return store
 

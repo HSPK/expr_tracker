@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from ._process import check_process, process_id, register_fork_reset
 from .artifacts import Artifact, ArtifactStore, coerce_artifact
 from .history import HistoryStore, current_rank
 from .history.naming import resolve_artifact_root, sidecar_filename
@@ -21,6 +22,17 @@ from .summary import Summary
 
 _lock = threading.RLock()
 _current: Run | None = None
+_forked_run = False
+
+
+def _reset_after_fork():
+    global _lock, _current, _forked_run
+    _forked_run = _current is not None or _forked_run
+    _current = None
+    _lock = threading.RLock()
+
+
+register_fork_reset(_reset_after_fork)
 
 BackendName = Literal["wandb", "jsonl", "trackio"]
 
@@ -77,6 +89,7 @@ class Run:
         stream: str | None = None,
         **history_kwargs,
     ):
+        self._owner_pid = process_id()
         self.project = project
         self.config = dict(config or {})
         self.entity = entity
@@ -84,6 +97,10 @@ class Run:
         self.tags = list(tags or [])
         backend_kwargs = dict(backend_kwargs or {})
         self._finished = False
+        self._finish_lock = threading.Lock()
+        self._finish_done = threading.Event()
+        self._finish_owner: int | None = None
+        self._finish_error: BaseException | None = None
         # Probed once: retrying on TypeError would double-log a backend whose own
         # code raised TypeError for an unrelated reason
         self._takes_commit: dict[str, bool] = {}
@@ -224,6 +241,8 @@ class Run:
             self.backends.pop(name, None)
 
     def _save_summary_at_exit(self):
+        if self._owner_pid != process_id():
+            return
         with contextlib.suppress(Exception):  # pragma: no cover - shutdown
             self.summary.save()
 
@@ -282,10 +301,12 @@ class Run:
 
     @property
     def dir(self) -> str:
+        check_process(self._owner_pid)
         return self.history.log_dir.as_posix() if self.history.log_dir else ""
 
     @property
     def url(self) -> str | None:
+        check_process(self._owner_pid)
         backend = self.backends.get("wandb")
         try:
             return backend.run.url if backend is not None else None
@@ -294,6 +315,7 @@ class Run:
 
     def define_metric(self, name: str, **kwargs):
         """Forwarded to backends that support it; a no-op for local history."""
+        check_process(self._owner_pid)
         for backend_name, backend in self.backends.items():
             define = getattr(backend, "define_metric", None)
             if define is None:
@@ -315,6 +337,7 @@ class Run:
         mode: str = "copy",
     ) -> Artifact:
         """Store a versioned file bundle, mirroring ``wandb.log_artifact``."""
+        check_process(self._owner_pid)
         artifact = coerce_artifact(
             artifact_or_path, name=name, type=type, metadata=metadata
         )
@@ -341,6 +364,7 @@ class Run:
         self, artifact_or_name: Artifact | str, type: str | None = None
     ) -> Artifact:
         """Resolve a previously logged artifact of this project."""
+        check_process(self._owner_pid)
         if isinstance(artifact_or_name, Artifact):
             resolved = artifact_or_name
         else:
@@ -372,7 +396,10 @@ class Run:
         }
         try:
             with open(
-                self.history.log_dir / "artifacts.jsonl", "a", encoding="utf-8"
+                self.history.log_dir / "artifacts.jsonl",
+                "a",
+                encoding="utf-8",
+                errors="backslashreplace",
             ) as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
@@ -401,19 +428,48 @@ class Run:
 
     def finish(self, exit_code: int | None = None, quiet: bool | None = None):
         """Close the run. ``exit_code``/``quiet`` exist for wandb compatibility."""
-        if self._finished:
+        self._require_shutdown_context()
+        owner = threading.get_ident()
+        with self._finish_lock:
+            if self._finish_done.is_set():
+                leader = False
+            elif self._finish_owner is None:
+                self._finish_owner = owner
+                leader = True
+            elif self._finish_owner == owner:
+                raise RuntimeError("Cannot reenter Run.finish() during shutdown.")
+            else:
+                leader = False
+        if not leader:
+            self._finish_done.wait()
+            if self._finish_error is not None:
+                raise RuntimeError("Run shutdown failed.") from self._finish_error
             return
-        self._finished = True
-        # Commit the final open row (it may fire an alert) before closing dispatch
         try:
-            self.history.flush(commit_open=True)
-        except Exception as e:
-            logger.warning(f"Failed to flush history on finish: {e}")
+            self._finish(exit_code)
+        except BaseException as error:
+            self._finish_error = error
+            raise
+        else:
+            self._finished = True
+        finally:
+            self._finish_done.set()
+
+    def _require_shutdown_context(self):
+        check_process(self._owner_pid)
+        self.history.require_outside_callback()
+        if self.alerts is not None and self.alerts.dispatcher.is_worker_thread():
+            raise RuntimeError(
+                "Cannot finish or reinitialize from an alert delivery callback."
+            )
+
+    def _finish(self, exit_code: int | None):
+        # Drain accepted writes and commit before closing their downstream sinks.
+        self.history.finish()
         self.summary.save()
         atexit.unregister(self._save_summary_at_exit)
         if self.alerts is not None:
             self.alerts.close()
-        self.history.finish()
         for name, backend in self.backends.items():
             try:
                 backend.finish(
@@ -449,13 +505,23 @@ def _accepts_commit(backend) -> bool:
 
 def set_run(run: Run | None):
     global _current
+    if run is not None:
+        check_process(run._owner_pid)
     with _lock:
         _current = run
 
 
 def current_run() -> Run | None:
+    global _forked_run
     with _lock:
-        return _current
+        inherited, _forked_run = _forked_run, False
+        current = _current
+    if inherited:
+        logger.warning(
+            "Discarded inherited tracker after fork; call et.init() in the child "
+            "with a distinct stream or run directory."
+        )
+    return current
 
 
 def require_run() -> Run:

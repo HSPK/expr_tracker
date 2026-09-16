@@ -38,7 +38,6 @@ def run(tmp_path):
         options.setdefault("name", "r")
         options.setdefault("dir", str(tmp_path / "et"))
         options.setdefault("backends", ["wandb"])
-        options.setdefault("max_open_seconds", None)
         created.append(Run(**options))
         return created[-1]
 
@@ -171,12 +170,13 @@ def test_wandb_summary_holds_the_last_committed_values(run):
 def test_our_history_and_wandb_agree_on_every_step(run):
     instance = run(name="agree")
     for step in range(20):
-        instance.log({"loss": float(step)})
         if step % 5 == 0:
             instance.log({"eval": float(step)}, step=step)
+        instance.log({"loss": float(step)})
     instance.history.flush(commit_open=True)
     assert wandb.run.step == 20
     assert len(instance.history_query(-1)) == 20
+    assert [row["loss"] for row in instance.history_query(-1)] == list(range(20))
 
 
 # ------------------------------------------------------------------ features
@@ -229,13 +229,12 @@ def test_a_full_offline_run_is_recorded_on_both_sides(tmp_path):
         dir=str(tmp_path / "et"),
         backends=["wandb"],
         config={"lr": 0.1},
-        max_open_seconds=None,
     )
     try:
         for step in range(30):
-            et.log({"train/loss": 1.0 / (step + 1), "lr": 0.1})
             if step % 10 == 0:
                 et.log({"eval/acc": step / 30}, step=step)
+            et.log({"train/loss": 1.0 / (step + 1), "lr": 0.1})
         et.summary()["best_acc"] = 0.9
         assert wandb.run.step == 30
     finally:

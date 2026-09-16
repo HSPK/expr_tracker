@@ -60,6 +60,10 @@ therefore be written with spaces:
 
 A name with spaces or other characters must be quoted, with `"`, `'` or `` ` ``:
 
+All three styles also protect rule separators and brackets inside the name:
+`"a=>b" > 0 => warning: changed` and `'a,b' > 0, warning, changed` both refer
+to a single metric rather than splitting its name as rule metadata.
+
 ```
 "train loss" > 1
 'val acc@16' < 0.5
@@ -103,7 +107,10 @@ diff(loss)       # fine - diff has a sensible default of 2 points
 smaller of two scalars. The argument types decide.
 
 `no_data(30s)` takes a **duration** and asks whether anything has been committed
-recently. `age(loss)` takes a **metric** and returns how long since it last appeared.
+recently, using actual metric-row acceptance time rather than the row's opening
+timestamp. Before the first commit it measures from run start.
+`age(loss)` takes a **metric** and measures from its latest recorded sample
+timestamp (`_time`), which may be older for a row assembled over a long step.
 
 ## Three-valued logic
 

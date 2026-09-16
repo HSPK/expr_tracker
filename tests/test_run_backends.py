@@ -295,23 +295,42 @@ def test_rejected_step_reaches_no_sink(tmp_path):
         run.finish()
 
 
-def test_committed_row_fans_out_span_metrics(tmp_path):
+@pytest.mark.parametrize("span_count", [False, True])
+def test_committed_row_fans_out_span_metrics(tmp_path, span_count):
     backend = FakeBackend()
-    et.init(project="p", name="r", dir=str(tmp_path), backends=[backend])
+    et.init(
+        project="p",
+        name="r",
+        dir=str(tmp_path),
+        backends=[backend],
+        span_count=span_count,
+    )
     try:
         et.log({"loss": 1.0}, commit=False)
-        with et.span("forward"):
-            pass
+        for _ in range(2):
+            with et.span(
+                "forward",
+                plugins=[lambda span: {"gpu_percent": 60.0, "gpu_mem_peak_mb": 512.0}],
+            ):
+                pass
         et.log({"accuracy": 0.5})
 
         log_call = backend.calls[1]
         metrics = log_call[1][0]
         assert metrics["loss"] == 1.0
         assert metrics["accuracy"] == 0.5
-        assert metrics["count/forward"] == 1
         assert "time_ms/forward" in metrics
-        assert et.summary()["count/forward"] == 1
         assert "time_ms/forward" in et.summary()
+        assert metrics["gpu_percent/forward"] == pytest.approx(60.0)
+        assert metrics["gpu_mem_peak_mb/forward"] == 512.0
+        assert et.summary()["gpu_percent/forward"] == pytest.approx(60.0)
+        assert et.summary()["gpu_mem_peak_mb/forward"] == 512.0
+        if span_count:
+            assert metrics["count/forward"] == 2
+            assert et.summary()["count/forward"] == 2
+        else:
+            assert "count/forward" not in metrics
+            assert "count/forward" not in et.summary()
     finally:
         et.finish()
 

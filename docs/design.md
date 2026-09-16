@@ -22,7 +22,7 @@ Three write stages:
 
 ```
 log() ──merge──> open row (current step, in memory)
-                   │ step advances / commit=True / flush / finish / max_open_seconds
+                   │ step advances / commit=True / flush(commit_open=True) / finish
                    ▼
                 write buffer (adaptive: buffer_size / buffer_interval / max_buffer_seconds)
                    │
@@ -45,10 +45,9 @@ log(metrics: dict, step: int | None = None, commit: bool | None = None)
 - `step_policy="monotonic"` (default) drops backward writes with a warning;
   `"allow"` accepts them and marks `meta.sorted = false`.
 - Writing the same key twice in one step is last-wins, warned once per key per run.
-- `max_open_seconds` (default 60s) commits an idle open row so a crash cannot lose
-  it. If more data arrives for that step afterwards it is written as a **patch line**
-  and `meta.has_duplicate_steps` is set; the reader merges by step, so correctness is
-  unaffected.
+- An open row has no time limit: elapsed time never commits it or advances the
+  step. If more data arrives for an explicitly committed step, it is written as a
+  **patch line** and `meta.has_duplicate_steps` is set; the reader merges by step.
 
 **The writer guarantees one line per step in ascending order; the reader assumes
 none of that** — it must cope with older files, stray writers and patch lines.
@@ -102,9 +101,11 @@ commit rules exist in one place regardless of which API produced the metrics.
 Two differences from a log call:
 
 - the merge **accumulates** rather than replaces, because the same span can run
-  many times in one step;
-- the metrics are built here from floats and ints, so they skip `RecordCodec`.
-  That encoder costs 5 µs, which a per-sub-step call cannot afford.
+  many times in one step: durations and counters sum, memory peaks take the
+  maximum, and utilization uses a duration-weighted mean;
+- built-in durations and counts are already floats and ints, so they skip
+  `RecordCodec`. Optional plugin measurements and attributes are encoded
+  independently, keeping bare spans cheap without accepting unserializable data.
 
 Metrics are named `<measurement>/<span path>` — `time_ms/step/forward`, not
 `step/forward/time_ms`. A tracker UI groups by the segment before the first
@@ -116,12 +117,16 @@ group and leaves the caller's names alone.
 A span never commits a step: durations ride along with whatever `log()` commits,
 so timing a region adds no row. The tree, with timestamps and attributes, goes to
 `spans[.stream][.rankN].jsonl` through a second `JsonlWriter`, enqueued rather
-than appended so a span does not pay for a flush decision of its own.
+than committed as metric rows. That writer's reusable background worker flushes completed
+spans even if no further spans or metrics arrive, without advancing the step.
 
 The committed history row is also the fan-out boundary. Summary, alerts and
 remote backends consume the exact row emitted by `HistoryStore`, rather than the
 individual `log()` calls that assembled it. Span and plugin metrics therefore
 reach every sink without a second metric path.
+Commit tickets preserve that order while callbacks execute outside the transaction
+lock. A slow sink blocks its committing callers, not unrelated span transactions;
+shutdown and reinitialization drain notifications before closing or replacing sinks.
 
 Plugins hang off the same two hooks. `start` runs before the clock starts and
 `end` after it stops, so a plugin never inflates the duration it reports on; what
@@ -130,12 +135,12 @@ means a plugin needs no knowledge of the store, the codec or the accumulate rule
 A plugin that raises is logged and dropped: a measurement must not break the
 thing it measures.
 
-Peak-memory plugins have to fight the fact that `torch.cuda.max_memory_allocated`
-is one global high-water mark. Resetting it per span is the only way to attribute
-a peak, but a child's reset destroys its parent's history. `TorchMemory` keeps a
-per-thread stack and, as each span closes, hands its parent back the peak the
-parent had reached before that child opened, so `max(counter, carried)` is
-correct at every level.
+Peak-memory plugins have to account for `torch.cuda.max_memory_allocated` being a
+global high-water mark. `TorchMemory` coordinates active spans per device and
+preserves every existing span's peak before a new span resets the counter.
+CPU measurements are paired by span identity rather than a thread stack.
+NVML samplers update bounded per-active-span aggregates, so long spans retain
+their full sampling window without keeping every historical sample.
 
 GPU utilisation cannot be attributed by reading NVML at a span boundary: the
 counter is a rolling average over NVML's own window, so for a 3 ms span it
@@ -451,8 +456,8 @@ Read these before changing the modules they mention.
    dispatch does not advance the state.
 9. **Delivery failures are only logged** (`fail_silently`); configuration errors
    raise at configuration time.
-10. **Open-row timers carry a generation token**: once the step advances, an old
-    timer must not commit the new open row.
+10. **Elapsed time never commits an open row**: a training step can run arbitrarily
+    long. Writer timers only flush buffered records; they do not advance the step.
 
 ---
 

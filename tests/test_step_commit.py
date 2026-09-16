@@ -1,7 +1,11 @@
 """Step commit semantics: merging, auto-increment, step policy, patch lines, resume."""
 
 import json
+import threading
 import time
+from unittest.mock import Mock
+
+import pytest
 
 from expr_tracker.history import HistoryStore
 
@@ -57,6 +61,47 @@ def test_commit_false_accumulates(store):
     assert s.current_step == 1
 
 
+@pytest.mark.parametrize("step", [0, 10])
+def test_implicit_logs_reuse_an_explicit_open_step(store, step):
+    s = store()
+    assert s.log({"a": 1}, step=step) == step
+    assert s.log({"b": 2}, commit=False) == step
+    assert read_lines(s) == []
+    assert s.current_step == step
+    assert s.log({"c": 3}) == step
+    assert s.current_step == step + 1
+    assert s.log({"d": 4}) == step + 1
+    s.flush()
+    rows = [{k: v for k, v in row.items() if k != "_time"} for row in read_lines(s)]
+    assert rows == [
+        {"_step": step, "a": 1, "b": 2, "c": 3},
+        {"_step": step + 1, "d": 4},
+    ]
+
+
+def test_implicit_logs_follow_a_jump_that_committed_the_previous_row(store):
+    s = store()
+    s.log({"a": 1}, commit=False)
+    s.log({"b": 2}, step=10)
+    assert s.log({"c": 3}) == 10
+    assert s.current_step == 11
+    s.flush()
+    assert [row["_step"] for row in read_lines(s)] == [0, 10]
+    assert s.get(1)[0]["b"] == 2 and s.get(1)[0]["c"] == 3
+    assert s.log({"rejected": True}, step=9) is None
+
+
+def test_implicit_logs_reuse_an_allowed_backward_open_step(store):
+    s = store(step_policy="allow")
+    s.log({"a": 1}, step=10, commit=True)
+    s.log({"b": 2}, step=3)
+    assert s.log({"c": 3}) == 3
+    assert s.current_step == 4
+    s.flush()
+    assert [row["_step"] for row in read_lines(s)] == [10, 3]
+    assert s.get(-1)[0]["b"] == 2 and s.get(-1)[0]["c"] == 3
+
+
 def test_backward_step_is_dropped_by_default(store):
     s = store()
     s.log({"v": 0}, step=10)
@@ -75,20 +120,62 @@ def test_backward_step_allowed_by_policy(store):
     assert [r["_step"] for r in s.get(-1)] == [5, 10]
 
 
-def test_open_row_timeout_writes_patch_line(tmp_path):
-    s = HistoryStore().init(
-        project="p", name="patch", dir=str(tmp_path), max_open_seconds=0.05
-    )
-    s.log({"a": 1}, step=3)
-    time.sleep(0.2)
+@pytest.mark.parametrize("step", [None, 3])
+@pytest.mark.parametrize("commit_via", ["log", "advance", "flush", "finish", "exit"])
+def test_long_step_waits_for_a_commit(store, monkeypatch, step, commit_via):
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
+    timer = Mock()
+    monkeypatch.setattr(threading, "Timer", timer)
+    committed = []
+    s = store(buffer_size=1, on_commit=committed.append)
+    expected_step = 0 if step is None else step
+
+    s.log({"a": 1}, step=step, commit=False)
+    now += 24 * 60 * 60
     s.flush()
+    s.log({"b": 2}, step=step, commit=False)
+
+    timer.assert_not_called()
+    assert s.current_step == expected_step
+    assert read_lines(s) == []
+    assert s.get(-1, include_open=False) == []
+    assert committed == []
+    assert s.open_record() == {
+        "_step": expected_step,
+        "_time": now - 24 * 60 * 60,
+        "a": 1,
+        "b": 2,
+    }
+
+    if commit_via == "log":
+        s.log({}, step=step, commit=True)
+    elif commit_via == "advance":
+        s.log({"c": 3}, step=expected_step + 1)
+    elif commit_via == "flush":
+        s.flush(commit_open=True)
+    elif commit_via == "finish":
+        s.finish()
+    else:
+        s._atexit()
+
+    assert s.current_step == expected_step + 1
+    assert read_lines(s) == committed
+    assert len(committed) == 1
+    assert committed[0]["_step"] == expected_step
+    assert committed[0]["a"] == 1 and committed[0]["b"] == 2
+
+
+def test_explicit_commit_writes_patch_line(store):
+    s = store()
+    s.log({"a": 1}, step=3)
+    s.flush(commit_open=True)
     assert [r["_step"] for r in read_lines(s)] == [3]
     s.log({"b": 2}, step=3)  # late data for the same step: a patch line
     s.flush(commit_open=True)
     assert len(read_lines(s)) == 2
     merged = s.get(-1)
     assert merged == [{"_step": 3, "_time": merged[0]["_time"], "a": 1, "b": 2}]
-    s.finish()
 
 
 def test_resume_continues_from_last_step(tmp_path):

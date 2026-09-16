@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from ..models import AlertLevel, AlertRule
+from .lexer import QUOTES
 from .nodes import Node
 from .parser import parse
 
@@ -21,11 +23,16 @@ def parse_rule(text: str | Node | dict | AlertRule, **overrides: Any) -> AlertRu
         diff(m1) > 50, warn, m1 failure          # legacy comma form
     """
     if isinstance(text, AlertRule):
-        return text
+        if not overrides:
+            return text
+        values = asdict(text)
+        if text.auto_named:
+            values["name"] = None
+        return AlertRule(**{**values, **overrides})
     if isinstance(text, dict):
         return AlertRule.from_dict({**text, **overrides})
     if isinstance(text, Node):
-        return AlertRule(condition=text.to_source(), **overrides)
+        return AlertRule(**{"condition": text.to_source(), **overrides})
     condition, level, message = split_rule(str(text))
     values: dict[str, Any] = {"condition": condition}
     if level is not None:
@@ -37,7 +44,7 @@ def parse_rule(text: str | Node | dict | AlertRule, **overrides: Any) -> AlertRu
 
 
 def split_rule(text: str) -> tuple[str, str | None, str]:
-    """Split into ``(condition, level, message)``, respecting brackets and backticks."""
+    """Split rule metadata without cutting through brackets or quoted names."""
     source = text.strip()
     if not source:
         raise ValueError("Empty alert rule")
@@ -88,15 +95,18 @@ def _is_level(text: str) -> bool:
 
 
 def find_top_level(text: str, token: str) -> int:
-    """Find the first ``token`` outside brackets and backticks."""
+    """Find the first ``token`` outside brackets and quoted names."""
     depth = 0
-    quoted = False
+    quoted: str | None = None
     i = 0
     while i < len(text):
         ch = text[i]
-        if ch == "`":
-            quoted = not quoted
-        elif not quoted:
+        if quoted is not None:
+            if ch == quoted:
+                quoted = None
+        elif ch in QUOTES:
+            quoted = ch
+        else:
             if ch in "([":
                 depth += 1
             elif ch in ")]":
@@ -110,12 +120,15 @@ def find_top_level(text: str, token: str) -> int:
 def split_top_level(text: str, sep: str) -> list[str]:
     parts: list[str] = []
     depth = 0
-    quoted = False
+    quoted: str | None = None
     start = 0
     for i, ch in enumerate(text):
-        if ch == "`":
-            quoted = not quoted
-        elif not quoted:
+        if quoted is not None:
+            if ch == quoted:
+                quoted = None
+        elif ch in QUOTES:
+            quoted = ch
+        else:
             if ch in "([":
                 depth += 1
             elif ch in ")]":

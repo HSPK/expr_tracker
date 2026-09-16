@@ -21,7 +21,6 @@ def store(tmp_path, name, **kwargs):
         "project": "p",
         "name": name,
         "dir": str(tmp_path),
-        "max_open_seconds": None,
     }
     options.update(kwargs)
     return HistoryStore().init(**options)
@@ -127,17 +126,6 @@ def test_reserved_metric_names_are_ignored(tmp_path):
 
 
 # ---------------------------------------------------------------- lifecycle
-
-
-def test_open_row_timer_does_not_commit_the_next_step(tmp_path):
-    """After the step advances, the old timer must not commit the new open row."""
-    s = store(tmp_path, "timer_gen", max_open_seconds=0.15, buffer_size=1)
-    s.log({"a": 1}, step=0)
-    time.sleep(0.12)
-    s.log({"b": 2}, step=1)  # commits step 0 and re-arms the timer for step 1
-    time.sleep(0.08)  # the old timer would expire around now
-    assert s.open_record() is not None and s.open_record()["_step"] == 1
-    s.finish()
 
 
 def test_log_after_finish_is_rejected(tmp_path):
@@ -330,14 +318,13 @@ def test_reinit_flushes_the_previous_writer(tmp_path):
         project="p",
         name="first",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1000,
         buffer_interval=None,
         max_buffer_seconds=None,
     )
     s.log({"v": 1})
     first_file = s.log_fp
-    s.init(project="p", name="second", dir=str(tmp_path), max_open_seconds=None)
+    s.init(project="p", name="second", dir=str(tmp_path))
     try:
         assert first_file.exists() and '"v": 1' in first_file.read_text()
     finally:
@@ -346,11 +333,11 @@ def test_reinit_flushes_the_previous_writer(tmp_path):
 
 def test_history_n_with_many_patch_rows_per_step(tmp_path):
     """The widening loop must read from disk even when the cache already holds n rows."""
-    s = store(tmp_path, "widen", max_open_seconds=0.02, cache_rows=4, buffer_size=1)
+    s = store(tmp_path, "widen", cache_rows=4, buffer_size=1)
     for step in range(12):
-        for k in range(3):  # three physical rows per step via timeout patches
+        for k in range(3):  # three explicitly committed physical rows per step
             s.log({f"k{k}": step * 10 + k}, step=step)
-            time.sleep(0.03)
+            s.flush(commit_open=True)
     s.flush(commit_open=True)
 
     rows = s.get(6)
@@ -448,10 +435,10 @@ def test_non_string_metric_keys_do_not_break_logging(tmp_path):
 
 
 def test_open_row_repeating_a_committed_step_is_merged(tmp_path):
-    """A timeout commit followed by more metrics for that step is still one row."""
-    s = store(tmp_path, "reopen", max_open_seconds=0.05, buffer_size=1)
+    """An explicit commit followed by more metrics for that step is still one row."""
+    s = store(tmp_path, "reopen", buffer_size=1)
     s.log({"train/loss": 1.0}, step=7)
-    time.sleep(0.2)  # the open row times out and is committed
+    s.flush(commit_open=True)
     s.log({"eval/acc": 0.9}, step=7)  # same step, re-opened
 
     rows = s.get(1)

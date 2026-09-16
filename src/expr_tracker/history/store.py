@@ -2,7 +2,7 @@
 
 Write path::
 
-    log() --merge--> open row (current step) --commit--> cache + series + writer
+    log() --merge--> open row --commit--> cache + writer --notify--> series + callbacks
 
 Reads are served from the cache; disk is touched only once rows have been
 evicted (or after a resume), addressed by physical row ordinal.
@@ -11,18 +11,23 @@ evicted (or after a resume), addressed by physical row ordinal.
 from __future__ import annotations
 
 import atexit
+import contextlib
+import functools
 import json
 import operator
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextvars import Context, copy_context
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
+from tempfile import NamedTemporaryFile
+from typing import Any, Concatenate, Literal, ParamSpec, TypeVar
 
 from loguru import logger
 
+from .._process import check_process, process_id
 from .codec import RESERVED_KEYS, RecordCodec, encode_line
 from .frame import project, to_output
 from .naming import (
@@ -32,28 +37,71 @@ from .naming import (
     spans_filename,
     validate_stream,
 )
-from .reader import JsonlReader, merge_steps
+from .reader import JsonlReader, merge_steps, recent_steps
 from .series import DEFAULT_WINDOW, MetricSeries
 from .writer import (
     DEFAULT_BUFFER_INTERVAL,
     DEFAULT_BUFFER_SIZE,
     DEFAULT_MAX_BUFFER_SECONDS,
+    DEFAULT_MAX_PENDING_BYTES,
     DEFAULT_MAX_PENDING_RECORDS,
+    DEFAULT_MAX_RECORD_BYTES,
     JsonlWriter,
+    in_diagnostic_callback,
+    validate_byte_limits,
 )
 
 DEFAULT_CACHE_BYTES = 1 << 30  # 1 GiB
 DEFAULT_CACHE_ROWS = 2_000_000
-DEFAULT_MAX_OPEN_SECONDS = 60.0
 BIG_READ_WARN_ROWS = 2_000_000
 
 
 STEP_POLICIES = ("monotonic", "allow")
+Reduction = Literal["max", "mean"]
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
+def _serialized_write(
+    method: Callable[Concatenate[HistoryStore, _P], _T],
+) -> Callable[Concatenate[HistoryStore, _P], _T]:
+    @functools.wraps(method)
+    def wrapped(self: HistoryStore, *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        check_process(self._owner_pid)
+        pending: list[_Notification] = []
+        try:
+            with self._write_lock:
+                parent = getattr(self._callback_state, "pending", None)
+                if parent is not None:
+                    return method(self, *args, **kwargs)
+                self._callback_state.pending = pending
+                try:
+                    return method(self, *args, **kwargs)
+                finally:
+                    del self._callback_state.pending
+                    if pending:
+                        with self._notification_condition:
+                            self._notifications.extend(pending)
+                            self._notification_condition.notify_all()
+        finally:
+            if pending:
+                self._deliver_notifications(pending[-1])
+
+    return wrapped
 
 
 def resolve_commit(step: int | None, commit: bool | None) -> bool:
     """Without an explicit ``commit``: a step-less log commits, a stepped one waits."""
     return (step is None) if commit is None else commit
+
+
+def _normalize_step(step) -> int | None:
+    if step is None or type(step) is int:
+        return step
+    try:
+        return operator.index(step)
+    except TypeError as error:
+        raise TypeError("step must be an integer or None") from error
 
 
 @dataclass(frozen=True)
@@ -65,17 +113,21 @@ class HistoryOptions:
     buffer_interval: float | None = DEFAULT_BUFFER_INTERVAL
     max_buffer_seconds: float | None = DEFAULT_MAX_BUFFER_SECONDS
     max_pending_records: int = DEFAULT_MAX_PENDING_RECORDS
+    max_pending_bytes: int | None = DEFAULT_MAX_PENDING_BYTES
+    max_record_bytes: int | None = DEFAULT_MAX_RECORD_BYTES
     # in-memory cache
     cache_bytes: int = DEFAULT_CACHE_BYTES
     cache_rows: int = DEFAULT_CACHE_ROWS
     # step assembly
-    max_open_seconds: float | None = DEFAULT_MAX_OPEN_SECONDS
     step_policy: str = "monotonic"
     rank_aware: bool = True
     # an independent producer writing its own file with its own step cursor
     stream: str | None = None
     # write the full span tree to spans.jsonl beside the metrics
     spans: bool = True
+    span_count: bool = False
+    span_metrics: bool = True
+    span_async_write: bool = True
     # run-wide defaults for et.span(); a span's own arguments win
     span_print_fn: Callable[[str], None] | None = None
     span_plugins: Sequence[Any] = ()
@@ -85,6 +137,7 @@ class HistoryOptions:
     print_handle: Callable[[str], None] = print
 
     def __post_init__(self):
+        validate_byte_limits(self.max_pending_bytes, self.max_record_bytes)
         if self.step_policy not in STEP_POLICIES:
             raise ValueError(
                 f"Unknown step_policy {self.step_policy!r}; "
@@ -95,9 +148,6 @@ class HistoryOptions:
         clamped = {
             "cache_bytes": max(0, int(self.cache_bytes)),
             "cache_rows": max(1, int(self.cache_rows)),
-            "max_open_seconds": (
-                None if self.max_open_seconds is None else float(self.max_open_seconds)
-            ),
         }
         for key, value in clamped.items():
             object.__setattr__(self, key, value)
@@ -125,20 +175,37 @@ class _CacheView:
     rows: list[tuple[int, int, bytes]]
     complete: bool
     start_row: int
-    start_step: int | None
+    disk_end: int | None
 
     def records(self) -> list[dict]:
         return _parse_cached(self.rows)
+
+
+@dataclass
+class _Notification:
+    record: dict
+    options: HistoryOptions
+    on_commit: Callable[[dict], None] | None
+    context: Context
+    done: bool = False
 
 
 class HistoryStore:
     """Local jsonl history: the ``jsonl`` backend and the source of ``et.history()``."""
 
     def __init__(self):
+        self._owner_pid = process_id()
         self._lock = threading.RLock()
+        self._write_lock = threading.RLock()
+        self._lifecycle_lock = threading.Lock()
+        self._lifecycle_owner: int | None = None
+        self._notification_condition = threading.Condition()
+        self._notifications: deque[_Notification] = deque()
+        self._notification_owner: int | None = None
+        self._notification_depth = 0
+        self._callback_state = threading.local()
+        self._closing = threading.Event()
         self._codec = RecordCodec()
-        self._open_timer: threading.Timer | None = None
-        self._open_generation = 0
         self._atexit_registered = False
         self.writer: JsonlWriter | None = None
         self.log_dir: Path | None = None
@@ -166,13 +233,15 @@ class HistoryStore:
             self._disk_queries = 0
             self._evicted_rows = 0
             self._closed = False
+            self._closing.clear()
             self._codec.reset()
             self._open_step: int | None = None
             self._open_row: dict = {}
+            self._open_weights: dict[str, float] = {}
             self._open_time = 0.0
-            self._open_generation += 1
             self._next_step = 0
             self._next_row = 0
+            self._next_span_row = 0
             self._last_committed_step: int | None = None
             self._last_emitted_step: int | None = None
             self._last_commit_time: float | None = None
@@ -190,13 +259,31 @@ class HistoryStore:
         **options,
     ) -> HistoryStore:
         """Open (or resume) a run. Tunables are named in :class:`HistoryOptions`."""
+        self.require_outside_callback()
         opts = HistoryOptions.from_kwargs(**options)
         if name is None:
             name = time.strftime("run-%Y%m%d-%H%M%S")
             logger.warning(f"No run name provided, using generated name: {name}")
+        log_dir = resolve_log_dir(project, name, dir, run_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with self._lifecycle_operation():
+            self._closing.set()
+            self._close_previous()
+            with self._write_lock:
+                self._init_run(project, name, log_dir, config, opts, on_commit)
+        return self
+
+    def _init_run(
+        self,
+        project: str,
+        name: str,
+        log_dir: Path,
+        config: dict | None,
+        opts: HistoryOptions,
+        on_commit: Callable[[dict], None] | None,
+    ):
         self.project, self.name = project, name
-        self.log_dir = resolve_log_dir(project, name, dir, run_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir = log_dir
         self.stream = opts.stream
         self.config_fp = self.log_dir / sidecar_filename("config", opts.stream, "json")
         self.spans_fp = (
@@ -206,7 +293,6 @@ class HistoryStore:
         )
         self.log_fp = self.log_dir / metrics_filename(opts.stream, opts.rank_aware)
 
-        self._close_previous()
         self._reset(opts, on_commit)
         self.writer = self._open_writer(opts)
         self.span_writer = (
@@ -216,10 +302,14 @@ class HistoryStore:
                 buffer_interval=opts.buffer_interval,
                 max_buffer_seconds=opts.max_buffer_seconds,
                 max_pending_records=opts.max_pending_records,
+                max_pending_bytes=opts.max_pending_bytes,
+                max_record_bytes=opts.max_record_bytes,
+                async_write=opts.span_async_write,
             )
             if self.spans_fp is not None
             else None
         )
+        self._next_span_row = self.span_writer.lines if self.span_writer else 0
         self._resume(opts.alert_window)
         self._write_config(config)
         self._register_atexit()
@@ -227,14 +317,14 @@ class HistoryStore:
         # what the caller passed, and guessing that is nobody's idea of fun
         resumed = f", resuming at step {self._next_step}" if self._next_step else ""
         logger.info(f"Run {self.name!r} -> {self.log_dir}{resumed}")
-        return self
 
     def _close_previous(self):
-        """Re-initialising must not strand the previous writer's buffer or timer."""
-        self._cancel_open_timer()
-        for writer in (self.writer, self.span_writer):
-            if writer is not None:
-                writer.close()
+        """Commit using the old run's metadata and callback before replacing it."""
+        self.flush(commit_open=True)
+        with self._write_lock:
+            for writer in (self.writer, self.span_writer):
+                if writer is not None:
+                    writer.close()
 
     def _open_writer(self, options: HistoryOptions) -> JsonlWriter:
         assert self.log_fp is not None
@@ -244,6 +334,8 @@ class HistoryStore:
             buffer_interval=options.buffer_interval,
             max_buffer_seconds=options.max_buffer_seconds,
             max_pending_records=options.max_pending_records,
+            max_pending_bytes=options.max_pending_bytes,
+            max_record_bytes=options.max_record_bytes,
             meta_extra={
                 "project": self.project,
                 "name": self.name,
@@ -283,24 +375,49 @@ class HistoryStore:
             logger.warning(
                 f"Config file {self.config_fp} already exists. It will be overwritten."
             )
+        temporary = None
         try:
-            with open(self.config_fp, "w", encoding="utf-8") as f:
+            encoded = self._codec.encode(config, kind="config")
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                errors="backslashreplace",
+                dir=self.config_fp.parent,
+                prefix=f".{self.config_fp.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                temporary = Path(f.name)
                 json.dump(
-                    self._codec.encode(config, kind="config"),
+                    encoded,
                     f,
                     indent=4,
                     ensure_ascii=False,
                 )
+            temporary.replace(self.config_fp)
         except Exception as e:
             logger.error(f"Failed to write config to {self.config_fp}: {e}")
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError as error:
+                    logger.warning(
+                        f"Could not remove temporary config {temporary}: {error}"
+                    )
 
     def _require_init(self):
+        check_process(self._owner_pid)
         if self.writer is None:
             raise RuntimeError(
                 "HistoryStore.init() must be called before logging or querying."
             )
 
     # ------------------------------------------------------------------ writing
+
+    def _encode_span_data(self, data: dict, *, kind: str) -> dict:
+        self._require_init()
+        return self._codec.encode(data, kind=kind)
 
     def log(
         self, metrics: dict, step: int | None = None, commit: bool | None = None
@@ -318,8 +435,13 @@ class HistoryStore:
         ``is None``, since step 0 is falsy.
         """
         self._require_init()
+        if self._closed or self._closing.is_set():
+            logger.warning("Tracker is already finished; dropping metrics.")
+            return None
+        step = _normalize_step(step)
         return self.ingest(self._codec.encode(metrics), step=step, commit=commit)
 
+    @_serialized_write
     def ingest(
         self,
         encoded: dict,
@@ -327,34 +449,57 @@ class HistoryStore:
         step: int | None = None,
         commit: bool | None = None,
         accumulate: bool = False,
+        reductions: Mapping[str, Reduction] | None = None,
+        weight: float = 1.0,
     ) -> int | None:
         """The single path metrics take into the open row.
 
         ``log()`` and span durations both come through here, so the step policy,
         the merge and the commit rules only exist once. ``accumulate`` adds to any
-        existing value instead of replacing it, which is what repeated spans in
-        one step need.
+        existing value instead of replacing it. ``reductions`` overrides that for
+        peak and weighted-mean measurements; weights belong only to this open row.
         """
         self._require_init()
+        if self._closed or self._closing.is_set():
+            logger.warning("Tracker is already finished; dropping metrics.")
+            return None
+        step = _normalize_step(step)
+        return self._ingest(encoded, step, commit, accumulate, reductions, weight)
+
+    def _ingest(
+        self,
+        encoded: dict,
+        step: int | None,
+        commit: bool | None,
+        accumulate: bool,
+        reductions: Mapping[str, Reduction] | None,
+        weight: float,
+    ) -> int | None:
         now = time.time()
         pending: list[dict] = []
         with self._lock:
-            if self._closed:
-                logger.warning("Tracker is already finished; dropping metrics.")
-                return None
             if step is not None and not self._accept_step(step):
                 return None
             pending.append(self._switch_open_row(step, now))
             resolved = self._open_step
-            self._update_open_row(encoded, accumulate)
+            self._update_open_row(encoded, accumulate, reductions, weight)
             if resolve_commit(step, commit):
                 pending.append(self._close_open_row())
+        accepted = True
         for record in filter(None, pending):
-            self._emit(record)
-        self._schedule_open_timer()
-        return resolved
+            if self._emit(record) is False and record["_step"] == resolved:
+                accepted = False
+        return resolved if accepted else None
 
-    def record_span(self, metrics: dict, record: dict | None = None) -> int | None:
+    @_serialized_write
+    def record_span(
+        self,
+        metrics: dict,
+        record: dict | None = None,
+        *,
+        reductions: Mapping[str, Reduction] | None = None,
+        weight: float = 1.0,
+    ) -> int | None:
         """A finished span: durations join the open row, the tree goes to disk.
 
         Durations never commit a step of their own -- they ride along with
@@ -362,7 +507,15 @@ class HistoryStore:
         built from floats and ints here, so they skip the encoder: spans are
         recorded per sub-step and cannot afford it.
         """
-        step = self.ingest(metrics, commit=False, accumulate=True)
+        self._require_init()
+        if self._closed or self._closing.is_set():
+            logger.warning("Tracker is already finished; dropping span.")
+            return None
+        step = (
+            self._ingest(metrics, None, False, True, reductions, weight)
+            if self.options.span_metrics
+            else self.current_step
+        )
         if record is None or self.span_writer is None or step is None:
             return step
         try:
@@ -370,10 +523,9 @@ class HistoryStore:
         except Exception as e:
             logger.warning(f"Dropping span that cannot be serialized: {e}")
             return step
-        # enqueue, not append: the batch goes out when the step commits, so a
-        # span does not pay for a flush decision of its own
-        if self.span_writer.enqueue(step, self.span_writer.lines, line):
-            self.span_writer.flush()
+        if not self.span_writer.append_with_status(step, self._next_span_row, line):
+            return None
+        self._next_span_row += 1
         return step
 
     def _switch_open_row(self, step: int | None, now: float) -> dict | None:
@@ -382,7 +534,7 @@ class HistoryStore:
         Without an explicit step the current open row is reused, which is what makes
         ``log(a, commit=False)`` then ``log(b)`` land on one row.
         """
-        target = self._next_step if step is None else step
+        target = self.current_step if step is None else step
         if self._open_step == target:
             return None
         closed = self._close_open_row()
@@ -407,24 +559,29 @@ class HistoryStore:
 
     def _start_open_row(self, step: int, now: float):
         self._open_step, self._open_row, self._open_time = step, {}, now
-        self._open_generation += 1
-        timer, self._open_timer = self._open_timer, None
-        if timer is not None:
-            timer.cancel()
+        self._open_weights.clear()
 
-    def _update_open_row(self, encoded: dict, accumulate: bool = False):
+    def _update_open_row(
+        self,
+        encoded: dict,
+        accumulate: bool = False,
+        reductions: Mapping[str, Reduction] | None = None,
+        weight: float = 1.0,
+    ):
         for key in RESERVED_KEYS & set(encoded):
             self._codec.warn_once(
                 key, f"Metric name {key!r} is reserved and will be ignored."
             )
             encoded.pop(key)
         if accumulate:
-            # Repeated spans in one step sum rather than overwrite
             for key, value in encoded.items():
-                current = self._open_row.get(key)
-                self._open_row[key] = value + current if _addable(current) else value
+                reduction = reductions.get(key) if reductions else None
+                self._open_row[key] = self._accumulate_metric(
+                    key, value, reduction, weight
+                )
             return
         for key in encoded:
+            self._open_weights.pop(key, None)
             if key in self._open_row:
                 self._codec.warn_once(
                     key,
@@ -432,6 +589,33 @@ class HistoryStore:
                     "keeping the latest value.",
                 )
         self._open_row.update(encoded)
+
+    def _accumulate_metric(
+        self, key: str, value: Any, reduction: Reduction | None, weight: float
+    ):
+        current = self._open_row.get(key)
+        if not _addable(value):
+            self._open_weights.pop(key, None)
+            return value
+        if reduction == "mean":
+            previous_weight = (
+                self._open_weights.get(key, 0.0) if _addable(current) else 0.0
+            )
+            self._open_weights[key] = previous_weight + weight
+            if previous_weight == 0:
+                return value
+            if weight == 0:
+                return current
+            return (current * previous_weight + value * weight) / (
+                previous_weight + weight
+            )
+        self._open_weights.pop(key, None)
+        if not _addable(current):
+            return value
+        if reduction == "max":
+            # A new NaN must not disappear behind a previous finite peak.
+            return value if value != value else max(current, value)
+        return value + current
 
     def _close_open_row(self) -> dict | None:
         if self._open_step is None:
@@ -442,57 +626,156 @@ class HistoryStore:
         self._last_committed_step = self._open_step
         self._next_step = self._open_step + 1
         self._open_step, self._open_row = None, {}
+        self._open_weights.clear()
         return record
 
-    def _emit(self, record: dict):
-        """Push a committed row to the cache, series and writer, then notify."""
+    def _emit(self, record: dict) -> bool:
+        """Admit a row to the cache and writer, then stage its notification."""
         try:
             line = encode_line(record)
         except Exception as e:
             logger.error(f"Dropping record that cannot be serialized: {e}")
-            return
-        if self._store_row(record, line):
+            return False
+        should_flush = self._store_row(record, line)
+        if should_flush is None:
+            return False
+        if should_flush:
             self.writer.flush()
         else:
             self.writer.schedule_timer()
         self._evict()
-        self._notify(record)
+        self._callback_state.pending.append(
+            _Notification(record, self.options, self.on_commit, copy_context())
+        )
+        return True
 
-    def _store_row(self, record: dict, line: bytes) -> bool:
-        """Record the row everywhere in-memory; returns whether a flush is due.
+    def _store_row(self, record: dict, line: bytes) -> bool | None:
+        """Cache admitted records; return flush-due, or None for rejection.
 
-        Allocating the ordinal and buffering the line must be atomic, or concurrent
-        logging would break the ``row == physical line`` invariant.
+        The write lock serializes admission and ordinal allocation. Do not
+        hold the state lock while waiting for queue capacity: reads must stay live.
         """
         step = record["_step"]
+        row = self._next_row
+        accepted, should_flush = self.writer.enqueue_with_status(step, row, line)
+        if not accepted:
+            return None
         with self._lock:
             if self._last_emitted_step is not None and step <= self._last_emitted_step:
                 self._needs_merge = True
             self._last_emitted_step = step
-            row = self._next_row
             self._next_row += 1
             self._cache.append((row, step, line))
             self._cache_bytes += len(line)
-            self._last_commit_time = record.get("_time") or time.time()
-            # Allocation and enqueue must stay adjacent and unfailable; anything that
-            # can raise in between would consume an ordinal without writing a line
-            should_flush = self.writer.enqueue(step, row, line)
-        try:
-            self._series.add(step, record.get("_time") or 0.0, record)
-        except Exception as e:  # alert windows must never break logging
-            logger.warning(f"Could not update metric series: {e}")
+            self._last_commit_time = time.time()
         return should_flush
 
-    def _notify(self, record: dict):
-        """Hand the committed row to the screen and to the alert engine."""
-        if self.options.print_to_screen:
+    def _deliver_notifications(self, target: _Notification | None = None):
+        """Deliver in commit order, without holding write or state locks.
+
+        Producers wait for their own ticket, bounding queued rows by in-flight
+        calls rather than accumulating asynchronous work. A callback may recurse:
+        its thread delivers earlier queued tickets before its nested commit, and
+        completion is tracked separately from delivery order.
+
+        As with synchronous recursive logging, nested delivery advances the live
+        series seen by a resumed outer callback; it is not a per-callback snapshot.
+        Undelivered tickets must never contribute points to that series.
+        """
+        check_process(self._owner_pid)
+        owner = threading.get_ident()
+        with self._notification_condition:
+            if target is None and self._notification_owner == owner:
+                # A callback's flush must not wait for its own active ancestors.
+                if not self._notifications:
+                    return
+                target = self._notifications[-1]
+        while True:
+            with self._notification_condition:
+                if target is not None and target.done:
+                    return
+                if (
+                    target is None
+                    and not self._notifications
+                    and self._notification_owner is None
+                ):
+                    return
+                if self._notifications and self._notification_owner in (None, owner):
+                    notification = self._notifications.popleft()
+                    self._notification_owner = owner
+                    self._notification_depth += 1
+                else:
+                    self._notification_condition.wait()
+                    continue
             try:
-                self.options.print_handle(f"{record}")
+                self._notify(notification)
+            finally:
+                with self._notification_condition:
+                    notification.done = True
+                    self._notification_depth -= 1
+                    if self._notification_depth == 0:
+                        self._notification_owner = None
+                    self._notification_condition.notify_all()
+
+    def _notify(self, notification: _Notification):
+        """Advance alert series and call hooks in the committing caller's context."""
+        previous = getattr(self._callback_state, "active", False)
+        self._callback_state.active = True
+        try:
+            notification.context.run(self._notify_callbacks, notification)
+        finally:
+            self._callback_state.active = previous
+
+    def require_outside_callback(self):
+        check_process(self._owner_pid)
+        if getattr(self._callback_state, "active", False):
+            raise RuntimeError(
+                "Cannot finish or reinitialize a run inside a history commit callback."
+            )
+        if getattr(self._callback_state, "pending", None) is not None:
+            raise RuntimeError(
+                "Cannot finish or reinitialize a run inside a history "
+                "write transaction."
+            )
+        current = threading.current_thread()
+        if any(
+            writer is not None and writer._worker is current
+            for writer in (self.writer, self.span_writer)
+        ):
+            raise RuntimeError(
+                "Cannot finish or reinitialize a run from a history writer worker."
+            )
+        if in_diagnostic_callback():
+            raise RuntimeError(
+                "Cannot finish or reinitialize a run from a writer diagnostic callback."
+            )
+        if self._lifecycle_owner == threading.get_ident():
+            raise RuntimeError("Cannot reenter history lifecycle operations.")
+
+    @contextlib.contextmanager
+    def _lifecycle_operation(self):
+        self.require_outside_callback()
+        with self._lifecycle_lock:
+            self._lifecycle_owner = threading.get_ident()
+            try:
+                yield
+            finally:
+                self._lifecycle_owner = None
+
+    def _notify_callbacks(self, notification: _Notification):
+        record, options = notification.record, notification.options
+        try:
+            self._series.add(record["_step"], record.get("_time") or 0.0, record)
+        except Exception as e:  # alert windows must never break logging
+            logger.warning(f"Could not update metric series: {e}")
+        if options.print_to_screen:
+            try:
+                options.print_handle(f"{record}")
             except Exception as e:
                 logger.warning(f"Failed to print metrics to screen: {e}")
-        if self.on_commit is not None:
+        if notification.on_commit is not None:
             try:
-                self.on_commit(record)
+                notification.on_commit(record)
             except Exception as e:
                 logger.warning(f"on_commit callback failed: {e}")
 
@@ -526,43 +809,22 @@ class HistoryStore:
             or len(self._cache) > self.options.cache_rows
         )
 
-    def _schedule_open_timer(self):
-        if self.options.max_open_seconds is None:
-            return
-        with self._lock:
-            if self._open_step is None or self._open_timer is not None:
-                return
-            generation = self._open_generation
-            timer = threading.Timer(
-                self.options.max_open_seconds, self._on_open_timeout, args=(generation,)
-            )
-            timer.daemon = True
-            self._open_timer = timer
-        timer.start()
-
-    def _cancel_open_timer(self):
-        with self._lock:
-            timer, self._open_timer = self._open_timer, None
-        if timer is not None:
-            timer.cancel()
-
-    def _on_open_timeout(self, generation: int):
-        """Commit the open row on timeout; ``generation`` pins the row it timed."""
-        with self._lock:
-            self._open_timer = None
-            if self._closed or generation != self._open_generation:
-                return
-            record = self._close_open_row()
-        if record is not None:
-            self._emit(record)
-
     # ------------------------------------------------------------------ lifecycle
 
     def flush(self, commit_open: bool = False):
-        """Write buffered rows to disk, also committing the open row if asked."""
+        """Flush rows and notifications, optionally committing the open row.
+
+        Inside a callback, only pending notifications are drained: active callback
+        ancestors cannot finish until this call returns.
+        """
+        check_process(self._owner_pid)
+        self._flush(commit_open)
+        self._deliver_notifications()
+
+    @_serialized_write
+    def _flush(self, commit_open: bool):
         record = None
         if commit_open:
-            self._cancel_open_timer()
             with self._lock:
                 record = self._close_open_row()
         if record is not None:
@@ -572,50 +834,62 @@ class HistoryStore:
                 writer.flush()
 
     def finish(self):
-        """Close the store. Never raises: a bad disk must not mask the real error."""
-        with self._lock:
+        """Drain writes and close, logging I/O failures rather than masking errors."""
+        self.require_outside_callback()
+        self._closing.set()
+        with self._lifecycle_operation():
+            # An init ahead of us may have cleared the event while we waited.
+            self._closing.set()
+            self._finish()
+
+    def _finish(self):
+        with self._write_lock, self._lock:
             self._closed = True
-        self._cancel_open_timer()
         try:
             self.flush(commit_open=True)
         except Exception as e:
             logger.warning(f"Failed to flush history on finish: {e}")
-        for writer in (self.writer, self.span_writer):
-            if writer is not None:
-                try:
-                    writer.close()
-                except Exception as e:
-                    logger.warning(f"Failed to close {writer.path}: {e}")
+        self._deliver_notifications()
+        with self._write_lock:
+            for writer in (self.writer, self.span_writer):
+                if writer is not None:
+                    try:
+                        writer.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to close {writer.path}: {e}")
         if self._atexit_registered:
             atexit.unregister(self._atexit)
             self._atexit_registered = False
 
     def _atexit(self):
-        try:
-            self.flush(commit_open=True)
-            if self.writer is not None:
-                self.writer.close()
-        except Exception:  # pragma: no cover - interpreter shutdown
-            pass
+        if self._owner_pid != process_id():
+            return
+        with contextlib.suppress(Exception):  # pragma: no cover - interpreter shutdown
+            self.finish()
 
     # ------------------------------------------------------------------ queries
 
     @property
     def current_step(self) -> int:
+        check_process(self._owner_pid)
         with self._lock:
             return self._open_step if self._open_step is not None else self._next_step
 
     @property
     def series(self) -> MetricSeries:
+        """Numeric history through the notification currently being delivered."""
+        check_process(self._owner_pid)
         return self._series
 
     @property
     def last_commit_time(self) -> float | None:
-        """Timestamp of the last committed step, used by ``no_data()``/``age()``."""
+        """When the latest metric row was accepted, independently of its sample time."""
+        check_process(self._owner_pid)
         with self._lock:
             return self._last_commit_time
 
     def open_record(self) -> dict | None:
+        check_process(self._owner_pid)
         with self._lock:
             if self._open_step is None:
                 return None
@@ -626,6 +900,10 @@ class HistoryStore:
             }
 
     def stats(self) -> dict:
+        check_process(self._owner_pid)
+        writer, span_writer = self.writer, self.span_writer
+        pending_bytes = writer.pending_bytes if writer else 0
+        span_pending_bytes = span_writer.pending_bytes if span_writer else 0
         with self._lock:
             return {
                 "log_dir": self.log_dir.as_posix() if self.log_dir else None,
@@ -633,6 +911,10 @@ class HistoryStore:
                 "rows_on_disk": self.writer.lines if self.writer else 0,
                 "last_step": self._last_committed_step,
                 "rows_logged": self._next_row,
+                "pending_bytes": pending_bytes,
+                "span_pending_bytes": span_pending_bytes,
+                "dropped_records": self.writer.dropped if self.writer else 0,
+                "dropped_spans": self.span_writer.dropped if self.span_writer else 0,
                 "cached_rows": len(self._cache),
                 "cached_bytes": self._cache_bytes,
                 "cache_limit_bytes": self.options.cache_bytes,
@@ -678,18 +960,36 @@ class HistoryStore:
         limit = None if n is None or n < 0 else max(0, n)
         if limit == 0:
             return []
+        writer = self.writer
+        assert writer is not None
+        # Error handlers can inspect history while a writer lock is held.
+        # Keep snapshot lock ordering consistent with that path.
+        with writer._lock, self._lock:
+            opened = self._open_rows(include_open, step_range)
+            merge = (
+                self._needs_merge
+                or bool(opened and self._open_repeats_a_step())
+                or bool(self.writer and self.writer.dropped)
+            )
+            view = (
+                self._view_tail(limit, merge=merge)
+                if step_range is None
+                else self._view_range(step_range, merge=merge)
+            )
         if step_range is None:
-            records = self._collect_tail(limit)
-        else:
-            records = self._collect_range(step_range)
-        records += self._open_rows(include_open, step_range)
-        return self._take_steps(records, limit, merge=self._open_repeats_a_step())
+            records = self._collect_tail(limit, view, opened, merge=merge) + opened
+            return self._take_steps(records, limit, merge=merge)
+        records = self._collect_range(step_range, view) + opened
+        # Ranges are selected in step order, independently of write recency.
+        if merge:
+            records = merge_steps(records)
+        return records if limit is None else records[-limit:]
 
     def _open_repeats_a_step(self) -> bool:
         """Whether the open row carries a step that was already committed.
 
-        That happens when a ``max_open_seconds`` timeout commits a row and more
-        metrics arrive for the same step, so results have to be merged even though
+        That happens when a row is explicitly committed and more metrics arrive
+        for the same step, so results have to be merged even though
         no second row has been emitted yet.
         """
         with self._lock:
@@ -710,15 +1010,17 @@ class HistoryStore:
             return []
         return [record]
 
-    def _view_tail(self, steps: int | None) -> _CacheView:
+    def _view_tail(self, steps: int | None, *, merge: bool = False) -> _CacheView:
         """Snapshot the cache rows covering the newest ``steps`` steps."""
         with self._lock:
-            if steps is None:
+            if steps is None or merge:
                 return self._make_view(list(self._cache), complete=False)
             rows, complete = _scan_tail(self._cache, steps)
             return self._make_view(rows, complete)
 
-    def _view_range(self, step_range: tuple[int | None, int | None]) -> _CacheView:
+    def _view_range(
+        self, step_range: tuple[int | None, int | None], *, merge: bool = False
+    ) -> _CacheView:
         """Snapshot the cache rows inside ``step_range``."""
         start = step_range[0]
         with self._lock:
@@ -726,7 +1028,7 @@ class HistoryStore:
                 # Nothing cached: _view decides whether the disk still has to answer
                 return self._make_view([], complete=False)
             oldest = self._cache[0][1]
-            if self._needs_merge:  # steps may be unordered: nothing can be skipped
+            if merge:  # steps may be unordered: nothing can be skipped
                 rows = [e for e in self._cache if _in_range(e[1], step_range)]
                 return self._make_view(rows, complete=False)
             forward = _nearer_front(step_range, oldest, self._cache[-1][1])
@@ -735,13 +1037,18 @@ class HistoryStore:
             return self._make_view(rows, complete=start is not None and start >= oldest)
 
     def _make_view(self, rows: list, complete: bool) -> _CacheView:
-        """Wrap a cache slice with its boundary. Must be called holding the lock."""
+        """Wrap a cache slice; query snapshots hold writer then store-state locks."""
         first = self._cache[0] if self._cache else None
+        disk_end = None
+        if self.writer is not None and self.writer.dropped:
+            # Dropped ordinals cannot locate a physical boundary. Snapshot the
+            # durable file and merge its overlap with the newer cached rows.
+            disk_end = self.writer.size
         return _CacheView(
             rows=rows,
             complete=complete or not self._has_disk_prefix or self.writer is None,
             start_row=first[0] if first else self._next_row,
-            start_step=first[1] if first else None,
+            disk_end=disk_end,
         )
 
     def _take_steps(
@@ -762,28 +1069,35 @@ class HistoryStore:
 
         The boundary is a physical row ordinal, not a step: patch lines repeat a
         step, and a step lookup would also exclude that step's earlier row. Row
-        numbers shift once records are dropped, so that case falls back to steps.
+        numbers shift once records are dropped, so that case merges an overlapping
+        durable snapshot instead. Eviction only removes durable rows: a read never
+        needs to flush pending metrics, spans, or commit notifications.
         """
         with self._lock:
             self._disk_queries += 1
-        self.flush()
         assert self.writer is not None
         reader = self.writer.reader()
-        if self.writer.dropped:
-            if view.start_step is None:
-                return reader, reader.size
-            return reader, reader.offset_of_step(view.start_step)
+        if view.disk_end is not None:
+            return reader, view.disk_end
         return reader, reader.offset_of_line(view.start_row)
 
-    def _collect_tail(self, steps: int | None) -> list[dict]:
+    def _collect_tail(
+        self,
+        steps: int | None,
+        view: _CacheView,
+        opened: list[dict],
+        *,
+        merge: bool,
+    ) -> list[dict]:
         """Rows covering the newest ``steps`` steps (``None`` for the whole run)."""
         if steps == 0:
             return []
-        view = self._view_tail(steps)
         records = view.records()
         if view.complete:
             return records
-        return self._older(lambda: self._older_tail(view, steps, records)) + records
+        return self._older(
+            lambda: self._older_tail(view, steps, records + opened, merge=merge)
+        ) + records
 
     def _older(self, fetch: Callable[[], list[dict]]) -> list[dict]:
         """Rows from before the cache; an unreadable file degrades to cache-only.
@@ -801,7 +1115,12 @@ class HistoryStore:
             return []
 
     def _older_tail(
-        self, view: _CacheView, steps: int | None, newer: list[dict]
+        self,
+        view: _CacheView,
+        steps: int | None,
+        newer: list[dict],
+        *,
+        merge: bool,
     ) -> list[dict]:
         """The rows before the cache that are still needed to reach ``steps`` steps."""
         reader, end = self._disk_reader(view)
@@ -811,20 +1130,17 @@ class HistoryStore:
                     "Reading the full history from disk; this may take a while."
                 )
             return reader.parse_rows(reader.iter_raw(0, end))
-        # Widen until one whole step past the limit is in hand, so the oldest
-        # returned step cannot be cut in half by the read window
-        want = max(steps - len(newer), 1)
-        older: list[dict] = []
-        for _ in range(12):
-            older = reader.tail_rows(want, end)
-            if len(older) < want or _count_steps(older + newer) > steps:
-                break
-            want *= 2
-        return older
+        if not merge and not reader.merge:
+            return reader.tail(max(steps - len(newer), 0), end)
+        selected = reader.select_recent_steps(
+            steps, end, newer=(record["_step"] for record in reversed(newer))
+        )
+        return reader.read_selected_steps(selected, end)
 
-    def _collect_range(self, step_range: tuple[int | None, int | None]) -> list[dict]:
+    def _collect_range(
+        self, step_range: tuple[int | None, int | None], view: _CacheView
+    ) -> list[dict]:
         """Rows whose step falls inside ``step_range``."""
-        view = self._view_range(step_range)
         records = view.records()
         if view.complete:
             return records
@@ -861,16 +1177,12 @@ def _parse_cached(entries: Sequence[tuple[int, int, bytes]]) -> list[dict]:
     return records
 
 
-def _count_steps(records: Sequence[dict]) -> int:
-    return len({record.get("_step") for record in records})
-
-
 def _scan_tail(
     cache: Sequence[tuple[int, int, bytes]], steps: int
 ) -> tuple[list[tuple[int, int, bytes]], bool]:
     """Cache entries covering the newest ``steps`` steps, newest last.
 
-    Entries carry their step, so the walk stops as soon as one older step shows up:
+    Requires strictly ascending steps. The walk stops when an older step shows up:
     a query costs O(rows returned) rather than O(cache). Seeing that older step is
     also the proof that the newest ``steps`` steps are wholly cached, which the
     second return value reports.
@@ -922,16 +1234,7 @@ def _scan_range(
 
 def _newest_steps(records: Sequence[dict], limit: int) -> set:
     """The newest ``limit`` step values present in ``records``."""
-    seen: list = []
-    unique: set = set()
-    for record in reversed(records):
-        step = record.get("_step")
-        if step not in unique:
-            unique.add(step)
-            seen.append(step)
-            if len(seen) > limit:
-                break
-    return set(seen[:limit])
+    return recent_steps((record["_step"] for record in reversed(records)), limit)
 
 
 def _in_range(step, step_range: tuple[int | None, int | None]) -> bool:

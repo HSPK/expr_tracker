@@ -288,9 +288,13 @@ class ArtifactStore:
 
     def _digest(self, artifact: Artifact) -> str:
         hasher = hashlib.sha256()
-        hasher.update(f"{artifact.type}\0".encode())
+        hasher.update(f"{artifact.type}\0".encode("utf-8", errors="surrogatepass"))
         for entry in sorted(artifact.entries, key=lambda e: e.path):
-            hasher.update(f"{entry.path}\0{entry.digest}\0{entry.ref or ''}\0".encode())
+            hasher.update(
+                f"{entry.path}\0{entry.digest}\0{entry.ref or ''}\0".encode(
+                    "utf-8", errors="surrogatepass"
+                )
+            )
         return f"sha256:{hasher.hexdigest()}"
 
     def _materialise(self, artifact: Artifact, mode: str):
@@ -317,7 +321,9 @@ class ArtifactStore:
         record = artifact.to_dict()
         record["reused"] = reused
         try:
-            with open(self.index_path, "a", encoding="utf-8") as f:
+            with open(
+                self.index_path, "a", encoding="utf-8", errors="backslashreplace"
+            ) as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.error(f"Failed to update artifact index {self.index_path}: {e}")

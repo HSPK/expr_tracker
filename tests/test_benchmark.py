@@ -10,6 +10,7 @@ Run with ``-m benchmark -s`` to see the report.
 import gc
 import statistics
 import sys
+import threading
 import time
 import tracemalloc
 
@@ -40,7 +41,6 @@ def make(tmp_path):
 
     def factory(name="bench", **options):
         store = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         store.init(project="bench", name=name, dir=str(tmp_path), **options)
         created.append(store)
         return store
@@ -94,6 +94,86 @@ def test_log_throughput_and_tail_latency(make):
     assert stats["p99"] < 5e-3  # a buffer flush must not stall the loop
     assert stats["max"] < 0.5
     assert throughput > 5_000
+
+
+@pytest.mark.parametrize("async_write", [False, True])
+@pytest.mark.parametrize("span_metrics", [False, True])
+def test_span_throughput_and_worker_reuse(tmp_path, monkeypatch, async_write, span_metrics):
+    import expr_tracker as et
+
+    starts = []
+    original_start = threading.Thread.start
+
+    def start(thread):
+        starts.append(thread.name)
+        return original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    run = et.init(
+        project="bench",
+        name="spans",
+        dir=str(tmp_path),
+        backends=[],
+        span_async_write=async_write,
+        span_metrics=span_metrics,
+    )
+    try:
+        def record(index):
+            with et.span("work"):
+                pass
+
+        started = time.perf_counter()
+        samples = time_calls(6000, record)
+        run.history.flush()
+        drained_seconds = time.perf_counter() - started
+        stats = percentiles(samples)
+        report(f"span async={async_write} metrics={span_metrics}", stats)
+        print(
+            f"background thread starts: {len(starts)}; "
+            f"throughput including flush: {6000 / drained_seconds:,.0f} spans/s"
+        )
+        assert len(starts) <= 2
+        assert stats["p50"] < 200e-6
+        assert stats["p99"] < 10e-3
+        assert 1 / stats["mean"] > 5_000
+        assert 6000 / drained_seconds > 5_000
+        assert run.step == 0
+        assert run.history.span_writer.lines == 6000
+    finally:
+        et.finish()
+
+
+def test_trace_only_unique_names_keep_metric_memory_bounded(tmp_path):
+    import expr_tracker as et
+
+    run = et.init(
+        project="bench",
+        name="unique-spans",
+        dir=str(tmp_path),
+        backends=[],
+        span_metrics=False,
+        cache_bytes=1,
+    )
+    tracemalloc.start()
+    try:
+        baseline, _ = tracemalloc.get_traced_memory()
+        for index in range(10_000):
+            with et.span(f"request/{index}"):
+                pass
+        run.history.flush()
+        gc.collect()
+        current, peak = tracemalloc.get_traced_memory()
+        print(
+            f"\n10k unique trace-only spans: retained={(current - baseline) / 1024:.1f} KiB"
+            f", peak={(peak - baseline) / 1024:.1f} KiB"
+        )
+        assert run.history._open_row == {}
+        assert run.history._open_weights == {}
+        assert run.history.span_writer.lines == 10_000
+        assert current - baseline < 5 * 1024 * 1024
+    finally:
+        tracemalloc.stop()
+        et.finish()
 
 
 def test_log_cost_does_not_grow_with_history(make):

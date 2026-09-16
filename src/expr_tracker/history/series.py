@@ -6,8 +6,11 @@ while a deque cannot be sliced and would copy the whole buffer on every window r
 
 from __future__ import annotations
 
+import math
 import threading
 from collections.abc import Iterable, Sequence
+
+from loguru import logger
 
 Point = tuple[int, float, float]  # (step, timestamp, value)
 
@@ -41,7 +44,17 @@ class MetricSeries:
             for key, value in record.items():
                 if key.startswith("_"):
                     continue
-                number = _as_float(value)
+                try:
+                    number = _as_float(value)
+                except (OverflowError, TypeError, ValueError):
+                    # Valid JSON integers can exceed the alert series' float range.
+                    if key not in self._non_numeric:
+                        logger.warning(
+                            f"Metric {key!r} cannot be represented as a float; "
+                            "skipping its numeric series."
+                        )
+                    self._non_numeric.add(key)
+                    continue
                 if number is None:
                     self._non_numeric.add(key)
                     continue
@@ -54,10 +67,20 @@ class MetricSeries:
 
     def backfill(self, records: Iterable[dict]):
         """Preload from history on resume so windows work across restarts."""
+        invalid_timestamps = 0
         for record in records:
             step = record.get("_step")
             if isinstance(step, int):
-                self.add(step, float(record.get("_time") or 0.0), record)
+                timestamp = _timestamp(record.get("_time"))
+                if timestamp is None:
+                    invalid_timestamps += 1
+                    continue
+                self.add(step, timestamp, record)
+        if invalid_timestamps:
+            logger.warning(
+                f"Skipped {invalid_timestamps} history rows with invalid timestamps "
+                "during alert backfill."
+            )
 
     # ------------------------------------------------------------------ queries
 
@@ -113,3 +136,15 @@ def _as_float(value) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+def _timestamp(value) -> float | None:
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return None
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return timestamp if math.isfinite(timestamp) else None

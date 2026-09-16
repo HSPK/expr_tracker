@@ -268,19 +268,88 @@ def test_step_policy_allow_accepts_out_of_order_writes(tmp_path):
         et.finish()
 
 
-def test_open_row_timeout_commits_without_finish(tmp_path):
-    et.init(
+def test_long_training_step_keeps_spans_and_metrics_together(tmp_path, monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now)
+    monkeypatch.setattr(time, "perf_counter", lambda: now)
+    run = et.init(
         project="demo",
-        name="timeout",
+        name="long-step",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=0.1,
     )
     try:
-        et.log({"loss": 1.0}, step=3)  # explicit step: not committed immediately
-        deadline = time.monotonic() + 3
-        while et.info()["history"]["rows_on_disk"] == 0 and time.monotonic() < deadline:
-            time.sleep(0.05)
+        with et.span("step"):
+            with et.span("forward"):
+                now += 120
+            now += 3600
+            run.history.flush()
+            assert run.step == 0
+            assert et.info()["history"]["rows_on_disk"] == 0
+            with et.span("backward"):
+                now += 120
+
+        assert run.step == 0
+        assert et.info()["history"]["rows_on_disk"] == 0
+        et.log({"loss": 1.0})
+        assert run.step == 1
         assert et.info()["history"]["rows_on_disk"] == 1
+        row = et.history(-1)[0]
+        assert row["_step"] == 0 and row["loss"] == 1.0
+        assert row["time_ms/step"] == 3840 * 1000
+        assert row["time_ms/step/forward"] == 120 * 1000
+        assert row["time_ms/step/backward"] == 120 * 1000
+        assert not any(key.startswith("count/") for key in row)
     finally:
         et.finish()
+
+    spans = [
+        json.loads(line)
+        for line in (Path(run.dir) / "spans.jsonl").read_text().splitlines()
+    ]
+    assert [span["name"] for span in spans] == [
+        "step/forward",
+        "step/backward",
+        "step",
+    ]
+    assert all(span["_step"] == 0 for span in spans)
+
+
+@pytest.mark.parametrize("finish", [False, True])
+def test_span_only_process_records_one_step(tmp_path, finish):
+    code = textwrap.dedent(f"""\
+        import json
+        import expr_tracker as et
+
+        run = et.init(
+            project="demo", name="worker", run_dir={str(tmp_path)!r},
+            backends=[], stream="worker", rank_aware=False,
+        )
+        for i in range(3):
+            with et.span("work", batch=i), et.span("load"):
+                pass
+        print(json.dumps({{"step": run.step, "rows": run.history.stats()["rows_logged"]}}))
+        if {finish!r}:
+            et.finish()
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert json.loads(result.stdout) == {"step": 0, "rows": 0}
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "metrics.worker.jsonl").read_text().splitlines()
+    ]
+    spans = [
+        json.loads(line)
+        for line in (tmp_path / "spans.worker.jsonl").read_text().splitlines()
+    ]
+    assert len(rows) == 1 and rows[0]["_step"] == 0
+    assert len(spans) == 6 and all(span["_step"] == 0 for span in spans)
+    assert not any(key.startswith("count/") for key in rows[0])
+    for path in ("work", "work/load"):
+        matching = [span for span in spans if span["name"] == path]
+        assert len(matching) == 3
+        assert rows[0][f"time_ms/{path}"] == pytest.approx(
+            sum(span["dur_ms"] for span in matching)
+        )

@@ -2,7 +2,6 @@
 
 import json
 import threading
-import time
 
 import pytest
 
@@ -15,7 +14,6 @@ def build(tmp_path, name, count, **kwargs):
         project="p",
         name=name,
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1,
         **kwargs,
     )
@@ -47,7 +45,6 @@ def test_cache_never_evicts_unflushed_rows(tmp_path):
         project="p",
         name="unflushed",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1000,
         buffer_interval=None,
         max_buffer_seconds=None,
@@ -76,7 +73,7 @@ def test_step_range_uses_index(tmp_path):
 
 def test_include_open_row(tmp_path):
     s = HistoryStore().init(
-        project="p", name="open", dir=str(tmp_path), max_open_seconds=None
+        project="p", name="open", dir=str(tmp_path)
     )
     s.log({"a": 1})
     s.log({"b": 2}, step=1)  # still the open row
@@ -88,7 +85,7 @@ def test_include_open_row(tmp_path):
 
 def test_metrics_projection_and_dropna(tmp_path):
     s = HistoryStore().init(
-        project="p", name="proj", dir=str(tmp_path), max_open_seconds=None
+        project="p", name="proj", dir=str(tmp_path)
     )
     s.log({"loss": 1.0})
     s.log({"acc": 0.5})
@@ -183,7 +180,6 @@ def test_cache_disk_boundary_is_consistent(tmp_path, cache_bytes, buffer_size):
         project="p",
         name=f"mix{cache_bytes}-{buffer_size}",
         dir=str(tmp_path),
-        max_open_seconds=None,
         cache_bytes=cache_bytes,
         buffer_size=buffer_size,
     )
@@ -207,12 +203,11 @@ def test_cache_disk_boundary_is_consistent(tmp_path, cache_bytes, buffer_size):
 
 
 def test_patch_lines_survive_eviction(tmp_path):
-    """Patch lines from timeout commits must survive eviction and merge back."""
+    """Patch lines from explicit commits must survive eviction and merge back."""
     s = HistoryStore().init(
         project="p",
         name="patch_evict",
         dir=str(tmp_path),
-        max_open_seconds=0.01,
         cache_bytes=150,
         buffer_size=1,
     )
@@ -221,7 +216,7 @@ def test_patch_lines_survive_eviction(tmp_path):
         s.log({"a": i}, step=i)
         truth[i] = {"_step": i, "a": i}
         if i % 4 == 0:
-            time.sleep(0.03)  # trigger the open-row timeout commit
+            s.flush(commit_open=True)
             s.log({"b": -i}, step=i)  # late data for the same step: a patch line
             truth[i]["b"] = -i
     s.flush(commit_open=True)
@@ -237,12 +232,11 @@ def test_patch_lines_survive_eviction(tmp_path):
 
 
 def test_concurrent_log_and_query(tmp_path):
-    """Concurrent writes, queries and live timers must not raise or lose data."""
+    """Concurrent writes, queries and writer timers must not raise or lose data."""
     s = HistoryStore().init(
         project="p",
         name="race",
         dir=str(tmp_path),
-        max_open_seconds=0.01,
         buffer_size=7,
         buffer_interval=0.001,
         max_buffer_seconds=0.02,
@@ -286,7 +280,6 @@ def test_get_n_is_step_accurate_with_patch_lines(tmp_path, patches, cache_bytes)
         project="p",
         name=f"steps{patches}-{cache_bytes}",
         dir=str(tmp_path),
-        max_open_seconds=None,
         cache_bytes=cache_bytes,
         buffer_size=1,
     )
@@ -314,7 +307,6 @@ def test_offline_tail_is_step_accurate_with_patch_lines(tmp_path):
         project="p",
         name="offline_patch",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1,
     )
     for step in range(8):
@@ -344,7 +336,6 @@ def test_cache_range_scans_from_either_end(tmp_path, needs_merge):
         project="p",
         name=f"scan{needs_merge}",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1,
     )
     for step in range(30):
@@ -369,7 +360,6 @@ def test_query_cost_does_not_grow_with_the_cache(tmp_path):
         project="p",
         name="snapshot",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=500,
     )
     for i in range(5_000):
@@ -407,7 +397,7 @@ def test_scan_helpers_are_pure_and_exact():
 
 def test_open_row_inclusion_rules(tmp_path):
     s = HistoryStore().init(
-        project="p", name="openrows", dir=str(tmp_path), max_open_seconds=None
+        project="p", name="openrows", dir=str(tmp_path)
     )
     s.log({"a": 1})
     s.log({"b": 2}, step=1)  # open, not committed
@@ -424,24 +414,31 @@ def test_unknown_history_options_are_rejected(tmp_path):
         HistoryStore().init(project="p", name="typo", dir=str(tmp_path), cache_byte=1)
 
 
+@pytest.mark.parametrize("value", [None, 0, 60])
+def test_removed_open_timeout_option_is_rejected(tmp_path, value):
+    with pytest.raises(TypeError, match=r"Unknown history options.*max_open_seconds"):
+        HistoryStore().init(
+            project="p", name="removed", dir=str(tmp_path), max_open_seconds=value
+        )
+
+
 def test_option_validation_and_clamping():
     from expr_tracker.history.store import HistoryOptions
 
     with pytest.raises(ValueError, match="Unknown step_policy"):
         HistoryOptions(step_policy="descending")
-    options = HistoryOptions(cache_bytes=-5, cache_rows=0, max_open_seconds=3)
+    options = HistoryOptions(cache_bytes=-5, cache_rows=0)
     assert options.cache_bytes == 0
     assert options.cache_rows == 1
-    assert options.max_open_seconds == 3.0
 
 
 def test_reinit_resets_every_piece_of_run_state(tmp_path):
     """_reset is the single place run state is initialised, so nothing lingers."""
     s = HistoryStore()
-    s.init(project="p", name="one", dir=str(tmp_path), max_open_seconds=None)
+    s.init(project="p", name="one", dir=str(tmp_path))
     s.log({"v": 1}, step=7)
     s.log({"v": 2}, step=7)  # sets _needs_merge on the first run
-    s.init(project="p", name="two", dir=str(tmp_path), max_open_seconds=None)
+    s.init(project="p", name="two", dir=str(tmp_path))
     try:
         assert s.current_step == 0
         assert s.get(-1) == []
@@ -468,7 +465,7 @@ def test_every_output_format_orders_columns_the_same(tmp_path):
     """`_step`/`_time` first, then metrics in first-seen order, in all formats."""
     pytest.importorskip("pandas")
     s = HistoryStore().init(
-        project="p", name="order", dir=str(tmp_path), max_open_seconds=None
+        project="p", name="order", dir=str(tmp_path)
     )
     s.log({"loss": 1.0, "acc": 0.5, "_step": 999})  # reserved name must be ignored
     expected = ["_step", "_time", "loss", "acc"]

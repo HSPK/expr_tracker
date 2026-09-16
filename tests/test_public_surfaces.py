@@ -76,7 +76,6 @@ def test_explain_is_used_in_the_default_rule_message(tmp_path):
         name="explain",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert={
             "channels": [
                 {

@@ -15,17 +15,35 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+
+from ._process import check_process, process_id, register_fork_reset
+
+if TYPE_CHECKING:
+    from .history.store import Reduction
 
 # Per-thread and per-task by construction: a new thread starts from the default,
 # and each asyncio task gets its own copy, which is exactly span nesting.
 _STACK: ContextVar[tuple[Span, ...]] = ContextVar("et_span_stack", default=())
 
+
+def _reset_after_fork():
+    _STACK.set(())
+
+
+register_fork_reset(_reset_after_fork)
+
 TIME_METRIC = "time_ms"
 COUNT_METRIC = "count"
 RESERVED_METRICS = frozenset({TIME_METRIC, COUNT_METRIC})
+SPAN_REDUCTIONS: dict[str, Reduction] = {
+    "gpu_mem_peak_mb": "max",
+    "gpu_mem_used_mb": "max",
+    "cpu_percent": "mean",
+    "gpu_percent": "mean",
+}
 # Spaces, not a tab: a terminal measures tab stops from the start of the line, so
 # behind a log prefix the first level collapses to whatever is left of the stop.
 # Two spaces render the same width wherever the line begins.
@@ -66,7 +84,10 @@ def _safely(plugin: Any, hook: str, span: Span):
     if method is None:
         return None
     try:
-        return method(span)
+        result = method(span)
+        if hook == "end" and isinstance(result, dict):
+            return span._admissible(plugin, result)
+        return result
     except Exception as e:
         name = type(plugin).__name__
         _warn_once(name, hook, f"Span plugin {name} failed in {hook}(): {e}")
@@ -95,6 +116,7 @@ class Span:
 
     __slots__ = (
         "_ended",
+        "_owner_pid",
         "_store",
         "_token",
         "attributes",
@@ -121,6 +143,7 @@ class Span:
         plugins: Sequence[Any] = (),
         **attributes: Any,
     ):
+        self._owner_pid = process_id()
         self.name = str(name).strip("/") or "span"
         self.attributes = dict(attributes)
         self._store = store
@@ -141,6 +164,7 @@ class Span:
     # ------------------------------------------------------------------ lifecycle
 
     def begin(self) -> Span:
+        check_process(self._owner_pid)
         parent = current_span()
         self.path = f"{parent.path}/{self.name}" if parent else self.name
         self.depth = parent.depth + 1 if parent else 0
@@ -164,6 +188,7 @@ class Span:
 
     def end(self, error: BaseException | None = None) -> float:
         """Close the span and record it. Returns the duration in milliseconds."""
+        check_process(self._owner_pid)
         if self._ended or self.started_at == 0.0:
             # Never begun: there is no duration to report and nothing to record
             return self.duration_ms
@@ -174,7 +199,7 @@ class Span:
         for plugin in self.plugins:
             measured = _safely(plugin, "end", self)
             if isinstance(measured, dict):
-                self.metrics.update(self._admissible(plugin, measured))
+                self.metrics.update(measured)
         if self._token is not None:
             # Drop ourselves rather than resetting the token. A token restores
             # the whole stack as it was, so a span ended out of order would
@@ -187,6 +212,11 @@ class Span:
 
     def _admissible(self, plugin: Any, measured: dict) -> dict:
         """A plugin may add metrics to a span; it may not redefine its timing."""
+        measured = (
+            self._store._encode_span_data(measured, kind="span metrics")
+            if self._store is not None
+            else dict(measured)
+        )
         if not RESERVED_METRICS.intersection(measured):
             return measured
         name = type(plugin).__name__
@@ -245,14 +275,23 @@ class Span:
     def _record(self):
         if self._store is None:
             return
-        metrics = {
-            span_metric(TIME_METRIC, self.path): self.duration_ms,
-            span_metric(COUNT_METRIC, self.path): 1,
-            **{
-                span_metric(key, self.path): value
-                for key, value in self.metrics.items()
-            },
-        }
+        metrics = {}
+        reductions = {}
+        if self._store.options.span_metrics:
+            metrics = {
+                span_metric(TIME_METRIC, self.path): self.duration_ms,
+                **{
+                    span_metric(key, self.path): value
+                    for key, value in self.metrics.items()
+                },
+            }
+            if self._store.options.span_count:
+                metrics[span_metric(COUNT_METRIC, self.path)] = 1
+            reductions = {
+                span_metric(key, self.path): SPAN_REDUCTIONS[key]
+                for key in self.metrics
+                if key in SPAN_REDUCTIONS
+            }
         record = {
             "name": self.path,
             "depth": self.depth,
@@ -260,14 +299,18 @@ class Span:
             "start": self.started_at,
             "dur_ms": self.duration_ms,
         }
-        if self.attributes:
-            record["args"] = self.attributes
         if self.metrics:
             record["metrics"] = self.metrics
         if self.error:
             record["error"] = self.error
         try:
-            self._store.record_span(metrics, record)
+            if self.attributes and self._store.options.spans:
+                record["args"] = self._store._encode_span_data(
+                    self.attributes, kind="span attributes"
+                )
+            self._store.record_span(
+                metrics, record, reductions=reductions, weight=self.duration_ms
+            )
         except Exception as e:  # a measurement must never break the thing measured
             logger.warning(f"Failed to record span {self.path!r}: {e}")
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from loguru import logger
 
+from .._process import register_fork_reset
 from .backends import register_backend
 from .dispatch import Dispatcher
 from .engine import AlertEngine
@@ -33,6 +34,16 @@ _lock = threading.RLock()
 _configured: AlertConfig | None = None
 _default_dispatcher: Dispatcher | None = None
 _warned_no_channel = False
+
+
+def _reset_after_fork():
+    global _lock, _default_dispatcher, _warned_no_channel
+    _lock = threading.RLock()
+    _default_dispatcher = None
+    _warned_no_channel = False
+
+
+register_fork_reset(_reset_after_fork)
 
 
 # ---------------------------------------------------------------------- config
@@ -144,15 +155,12 @@ def build_engine(source: Any, rules: Sequence, run) -> AlertEngine:
         step = latest.get("_step") if latest else None
         if step is None:
             step = history.current_step
-        # A committed step leaves no open row, so fall back to the store's last
-        # commit time; otherwise no_data()/age() would think data never arrived
-        last_commit = latest.get("_time") if record is not None else None
         return EvalContext(
             history.series,
             step=step if isinstance(step, int) else None,
             now=time.time(),
             started_at=history.started_at,
-            last_commit_time=last_commit or history.last_commit_time,
+            last_commit_time=history.last_commit_time,
             record=latest or {},
         )
 

@@ -153,6 +153,10 @@ et.list_alert_rules() -> list[AlertRule]
 ```
 
 `rule` is a string, a dict, an `AlertRule`, or an `M` builder expression.
+Overrides apply to rule objects as well as text/dict/builder inputs. A rule
+object with overrides is copied and validated, not mutated; without overrides
+the original object is returned. Auto-generated names remain stable for
+enablement-only changes and change when the alert's identity changes.
 
 ### `configure_alert`
 
@@ -181,10 +185,22 @@ span.metrics                                    # what the plugins measured
 ```
 
 `et.span` is also an async context manager and a decorator. A closed span adds
-`time_ms/<path>`, `count/<path>` and one key per plugin metric to the open row,
+`time_ms/<path>` and one key per plugin metric to the open row,
 and appends the full record to `spans.jsonl`. The measurement leads the name so
 that a UI groups every timing together instead of filing each one under whatever
 it timed; `Span.duration_ms` is the same number on the object.
+
+Counts are disabled by default. Pass `span_count=True` to `et.init()` to also
+accumulate `count/<path>`. This does not change step assignment or the span file.
+Repeated CPU/GPU utilization measurements are duration-weighted means, and
+memory peaks are maxima; durations, deltas and other custom metrics still sum.
+
+Spans record their history step when they end, not when they begin, and never
+advance it themselves. `et.span(..., step=N)` only stores an attribute; it does not
+set the history step. See [Spans](../guide/spans.md) for span-only processes.
+The span file has its own reusable background writer and flushes even without
+metric commits. `span_async_write=False` selects synchronous span writes;
+`span_metrics=False` records only span events without metric aggregation.
 
 `print_fn(line)` announces the span's start and end, indented two spaces per level.
 `plugins` measure a resource across the span; both are inherited by child spans
@@ -210,9 +226,25 @@ Any object with `start(span)` and `end(span) -> dict` is a plugin, as is a plain
 ```python
 from expr_tracker.trace import build_trace, write_trace
 
-write_trace(run, "trace.json", stream="*", step_range=None)   # returns the span count
-build_trace(run, stream="*")                                  # the dict, unwritten
+write_trace(
+    run, "trace.json", stream="*", step_range=None, time_range=None, temp_dir=None
+)  # returns the span count
+build_trace(
+    run, stream="*", step_range=None, time_range=None, temp_dir=None
+)  # the dict, unwritten
 ```
+
+`time_range=(low, high)` uses absolute epoch seconds and selects positive-duration
+spans overlapping `[low, high)` without clipping. Either bound can be `None`;
+equal/reversed bounds select nothing. It combines with `step_range` using AND.
+All streams are aligned to the earliest selected start. `write_trace()` streams
+through temporary disk storage and atomically replaces the output; `build_trace()`
+retains its returned event list in memory.
+`temp_dir` selects an existing directory for the temporary spool database; the
+default is the system temporary directory. Output staging remains on the
+destination filesystem for atomic replacement.
+Non-finite arguments are exported as diagnostic strings rather than invalid JSON
+numeric constants; original span records are not changed.
 
 ## Artifacts
 

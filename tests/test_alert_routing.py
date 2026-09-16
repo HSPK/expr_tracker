@@ -91,7 +91,6 @@ def watched(tmp_path):
             backends=[],
             alert=alert,
             alert_rules=rules,
-            max_open_seconds=None,
             **options,
         )
         created.append(run)

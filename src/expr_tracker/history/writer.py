@@ -8,36 +8,138 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from loguru import logger
 
+from .._process import check_process, process_id, register_fork_reset
 from .reader import JsonlReader
 
 DEFAULT_BUFFER_SIZE = 50
 DEFAULT_BUFFER_INTERVAL = 1.0
 DEFAULT_MAX_BUFFER_SECONDS = 5.0
-# Buffer cap while writes keep failing; oldest records are dropped beyond it
+# Cap for slow or failing writes; overflow is dropped only after write failures
 DEFAULT_MAX_PENDING_RECORDS = 100_000
+DEFAULT_MAX_PENDING_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_RECORD_BYTES = 8 * 1024 * 1024
 DEFAULT_INDEX_EVERY = 1000
 # Index resolution halves past this, so memory and the sidecar stay bounded
 MAX_INDEX_ANCHORS = 4096
 TAIL_CHUNK_SIZE = 64 * 1024
 META_MIN_INTERVAL = 2.0
+MIN_RETRY_INTERVAL = 0.1
 SCHEMA_VERSION = 2
+
+
+_diagnostic_emission = threading.local()
+
+
+def in_diagnostic_callback() -> bool:
+    return getattr(_diagnostic_emission, "active", False)
+
+
+def _reset_diagnostic_context():
+    global _diagnostic_emission
+    _diagnostic_emission = threading.local()
+
+
+register_fork_reset(_reset_diagnostic_context)
+
+
+def _emit_diagnostic(level: str, message: str):
+    """Keep sink failures nonfatal without recursively entering Loguru's sink lock."""
+    operation_error = sys.exc_info()[1]
+    emitting = in_diagnostic_callback()
+    try:
+        if emitting:
+            os.write(
+                2, f"{level.upper()}: {message}\n".encode("utf-8", "backslashreplace")
+            )
+            return
+        _diagnostic_emission.active = True
+        try:
+            getattr(logger, level)(message)
+        except Exception as error:
+            os.write(
+                2,
+                (
+                    f"{level.upper()}: {message}\n"
+                    f"Writer diagnostic sink failed: {type(error).__name__}: {error}\n"
+                ).encode("utf-8", "backslashreplace"),
+            )
+    except OSError:
+        # Even an unavailable stderr must not replace an operation's own exception.
+        if operation_error is not None:
+            raise operation_error from None
+        raise
+    finally:
+        _diagnostic_emission.active = emitting
+
+
+class _Diagnostics(threading.local):
+    """One lazy, bounded-by-operation batch per thread, shared by nested methods."""
+
+    def __init__(self):
+        self.depth = 0
+        self.messages: list[tuple[str, str]] | None = None
+
+    def __enter__(self):
+        self.depth += 1
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.depth -= 1
+        if self.depth == 0 and self.messages is not None:
+            messages, self.messages = self.messages, None
+            for level, message in messages:
+                _emit_diagnostic(level, message)
+
+    def add(self, level: str, message: str):
+        if self.depth:
+            if self.messages is None:
+                self.messages = []
+            self.messages.append((level, message))
+        else:
+            _emit_diagnostic(level, message)
+
+
+def validate_byte_limits(
+    max_pending_bytes: int | None, max_record_bytes: int | None
+) -> None:
+    for name, value in (
+        ("max_pending_bytes", max_pending_bytes),
+        ("max_record_bytes", max_record_bytes),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value <= 0
+        ):
+            raise ValueError(f"{name} must be a positive integer or None")
 
 
 class JsonlWriter:
     """Buffered appender whose flush policy adapts to the append frequency.
 
+    Writers belong to their creating process and cannot be reused after fork.
+
     - ``buffer_size``: flush as soon as this many records are buffered.
     - ``buffer_interval``: a gap of at least this long means low-frequency writing,
       so the record is written straight through; ``None`` disables the check.
     - ``max_buffer_seconds``: longest a record may sit in memory before a background
-      timer flushes it; ``None`` disables the timer.
-    - ``max_pending_records``: buffer cap while writes keep failing.
+      worker flushes it; ``None`` disables the deadline.
+    - ``max_pending_records``: cap on queued and in-flight records. Healthy writers
+      wait for capacity; after write failures, overflow drops the oldest queued
+      records instead (in-flight writes cannot be evicted).
+    - ``max_pending_bytes``: cap on queued plus in-flight encoded line bytes.
+      ``None`` disables it. Batch assembly can temporarily use up to this much
+      additional memory; caller-owned lines waiting for admission are not counted.
+    - ``max_record_bytes``: reject larger encoded lines, logging and counting them
+      as dropped. ``None`` disables this limit, but a line must still fit within
+      ``max_pending_bytes``. Both byte limits must be positive integers or ``None``.
+    - ``async_write``: enqueue without producer disk I/O; ``flush`` and ``close``
+      still wait for accepted writes. The default preserves synchronous flushing.
     """
 
     def __init__(
@@ -48,9 +150,14 @@ class JsonlWriter:
         buffer_interval: float | None = DEFAULT_BUFFER_INTERVAL,
         max_buffer_seconds: float | None = DEFAULT_MAX_BUFFER_SECONDS,
         max_pending_records: int = DEFAULT_MAX_PENDING_RECORDS,
+        max_pending_bytes: int | None = DEFAULT_MAX_PENDING_BYTES,
+        max_record_bytes: int | None = DEFAULT_MAX_RECORD_BYTES,
         index_every: int = DEFAULT_INDEX_EVERY,
         meta_extra: dict | None = None,
+        async_write: bool = False,
     ):
+        self._owner_pid = process_id()
+        validate_byte_limits(max_pending_bytes, max_record_bytes)
         self.path = Path(path)
         self.meta_path = self.path.with_name(self.path.stem + ".meta.json")
         self.buffer_size = max(1, int(buffer_size))
@@ -61,10 +168,15 @@ class JsonlWriter:
             None if max_buffer_seconds is None else float(max_buffer_seconds)
         )
         self.max_pending_records = max(self.buffer_size, int(max_pending_records or 0))
+        self.max_pending_bytes = max_pending_bytes
+        self.max_record_bytes = max_record_bytes
         self.index_every = max(1, int(index_every))
         self.meta_extra = dict(meta_extra or {})
+        self.async_write = async_write
 
-        self.buffer: list[tuple[int, int, bytes]] = []  # (step, row, line)
+        self._buffer: deque[tuple[int, int, bytes]] = deque()  # (step, row, line)
+        self._queued_bytes = 0
+        self._inflight_bytes = 0
         self.index: list[tuple[int, int, int]] = []  # (step, line, byte offset)
         self.lines = 0
         self.size = 0
@@ -77,17 +189,27 @@ class JsonlWriter:
         self.sorted = True
         self.has_duplicate_steps = False
         self.dropped = 0
+        self.dropped_bytes = 0
 
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         self._write_lock = threading.Lock()
+        self._diagnostics = _Diagnostics()
         self._last_append_time: float | None = None
         self._first_buffered_time: float | None = None
-        self._flush_timer: threading.Timer | None = None
+        self._worker: threading.Thread | None = None
+        self._flush_deadline: float | None = None
+        self._flush_requested = False
+        self._retry_deadline: float | None = None
+        self._inflight_records = 0
+        self._closing = False
+        self._closed = False
         self._next_index_line = 0
         self._last_meta_time = 0.0
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._load()
+        with self._diagnostics:
+            self._load()
 
     # ------------------------------------------------------------------ open/resume
 
@@ -125,9 +247,12 @@ class JsonlWriter:
         try:
             os.truncate(self.path, cut)
         except Exception as e:
-            logger.error(f"Could not truncate torn tail of {self.path}: {e}")
+            self._diagnostics.add(
+                "error", f"Could not truncate torn tail of {self.path}: {e}"
+            )
             return
-        logger.warning(
+        self._diagnostics.add(
+            "warning",
             f"Dropped {size - cut} bytes of a torn final line in {self.path}."
         )
 
@@ -217,32 +342,141 @@ class JsonlWriter:
 
     # ------------------------------------------------------------------ writing
 
+    @property
+    def buffer(self) -> list[tuple[int, int, bytes]]:
+        """Snapshot of queued records, in order; mutating it does not edit the queue."""
+        check_process(self._owner_pid)
+        with self._lock:
+            return list(self._buffer)
+
+    @property
+    def queued_bytes(self) -> int:
+        """Encoded bytes waiting for a write, including requeued failures."""
+        check_process(self._owner_pid)
+        with self._lock:
+            return self._queued_bytes
+
+    @property
+    def inflight_bytes(self) -> int:
+        """Encoded bytes in the current write, still charged against capacity."""
+        check_process(self._owner_pid)
+        with self._lock:
+            return self._inflight_bytes
+
+    @property
+    def pending_bytes(self) -> int:
+        """Atomic sum of queued and in-flight encoded bytes."""
+        check_process(self._owner_pid)
+        with self._lock:
+            return self._queued_bytes + self._inflight_bytes
+
     def enqueue(self, step: int, row: int, line: bytes) -> bool:
         """Buffer an encoded line under the lock; returns whether a flush is due.
 
         Callers that allocate ``row`` themselves must call this while holding their
         own lock, so ordinal assignment and buffer order can never diverge.
+        Async writers also wake their worker here. False means no flush is due,
+        not an admission acknowledgement; closed writers log and return False.
+        At capacity, healthy writers wait without doing producer disk I/O. Closing
+        rejects admissions still waiting for capacity. Use ``enqueue_with_status``
+        when the caller also needs to know whether the record was accepted.
         """
-        now = time.monotonic()
-        with self._lock:
-            self.buffer.append((step, row, line))
-            if self._first_buffered_time is None:
-                self._first_buffered_time = now
-            interval = (
-                None if self._last_append_time is None else now - self._last_append_time
-            )
-            self._last_append_time = now
-            return self._should_flush(now, interval)
+        check_process(self._owner_pid)
+        return self.enqueue_with_status(step, row, line)[1]
+
+    def enqueue_with_status(
+        self, step: int, row: int, line: bytes
+    ) -> tuple[bool, bool]:
+        """Return ``(accepted, flush_due)``; acceptance does not imply durability.
+
+        Closed, oversized, or failure-overflowed new records return ``(False,
+        False)``. Accepted records can still be evicted after a later write failure.
+        Row allocation must be serialized by the caller, as with ``enqueue``.
+        """
+        check_process(self._owner_pid)
+        line_bytes = len(line)
+        diagnostic = None
+        try:
+            with self._condition:
+                if self._closing:
+                    diagnostic = (
+                        "warning",
+                        f"Ignoring write to closing or closed writer {self.path}.",
+                    )
+                    return False, False
+                if (
+                    self.max_record_bytes is not None
+                    and line_bytes > self.max_record_bytes
+                ) or (
+                    self.max_pending_bytes is not None
+                    and line_bytes > self.max_pending_bytes
+                ):
+                    self.dropped += 1
+                    self.dropped_bytes += line_bytes
+                    diagnostic = (
+                        "error",
+                        f"Rejected oversized record for {self.path}: "
+                        f"{line_bytes} bytes "
+                        f"(max_record_bytes={self.max_record_bytes}, "
+                        f"max_pending_bytes={self.max_pending_bytes}); "
+                        "dropped 1 record.",
+                    )
+                    return False, False
+                while (
+                    not self._closing
+                    and self._retry_deadline is None
+                    and not self._has_capacity(line_bytes)
+                ):
+                    # Capacity pressure must progress even without deadlines or an
+                    # explicit flush from an enqueue-only caller.
+                    if not self._flush_requested:
+                        self._schedule_flush(immediate=True)
+                    self._condition.wait()
+                if self._closing:
+                    diagnostic = (
+                        "warning",
+                        f"Ignoring write to closing or closed writer {self.path}.",
+                    )
+                    return False, False
+                if not self._has_capacity(line_bytes):
+                    accepted, message = self._cap_buffer(line_bytes)
+                    diagnostic = ("error", message)
+                    if not accepted:
+                        return False, False
+                now = time.monotonic()
+                self._buffer.append((step, row, line))
+                self._queued_bytes += line_bytes
+                if self._first_buffered_time is None:
+                    self._first_buffered_time = now
+                interval = (
+                    None if self._last_append_time is None
+                    else now - self._last_append_time
+                )
+                self._last_append_time = now
+                should_flush = self._should_flush(now, interval)
+                if self.async_write:
+                    self._schedule_flush(immediate=should_flush)
+                return True, should_flush
+        finally:
+            if diagnostic is not None:
+                self._diagnostics.add(*diagnostic)
 
     def append(self, step: int, row: int, line: bytes):
         """Buffer an encoded line, flushing if needed. ``row`` is the append ordinal."""
-        if self.enqueue(step, row, line):
-            self.flush()
-        else:
-            self.schedule_timer()
+        self.append_with_status(step, row, line)
+
+    def append_with_status(self, step: int, row: int, line: bytes) -> bool:
+        """Append with the usual flush policy, returning whether admission succeeded."""
+        accepted, should_flush = self.enqueue_with_status(step, row, line)
+        if accepted and not self.async_write:
+            if should_flush:
+                self.flush()
+            else:
+                self.schedule_timer()
+        return accepted
 
     def _should_flush(self, now: float, interval: float | None) -> bool:
-        if len(self.buffer) >= self.buffer_size:
+        if len(self._buffer) >= self.buffer_size:
             return True
         # First append: create file content as early as possible
         if interval is None:
@@ -256,59 +490,106 @@ class JsonlWriter:
         )
 
     def schedule_timer(self):
-        if self.max_buffer_seconds is None:
+        """Arm the reusable worker's deadline without creating a timer per batch."""
+        check_process(self._owner_pid)
+        with self._lock:
+            self._schedule_flush()
+
+    def _schedule_flush(self, *, immediate: bool = False):
+        """Schedule work while holding the buffer lock."""
+        if self._closing or not self._buffer:
             return
-        with self._lock:
-            if self._flush_timer is not None or not self.buffer:
-                return
-            now = time.monotonic()
-            elapsed = now - (self._first_buffered_time or now)
-            timer = threading.Timer(
-                max(0.0, self.max_buffer_seconds - elapsed), self._on_timer
+        self._flush_requested |= immediate
+        if self.max_buffer_seconds is not None and self._flush_deadline is None:
+            first = self._first_buffered_time
+            if first is None:
+                first = time.monotonic()
+            self._flush_deadline = first + max(0.0, self.max_buffer_seconds)
+        if not self._flush_requested and self._flush_deadline is None:
+            return
+        if self._worker is None:
+            self._worker = threading.Thread(
+                target=self._run_worker,
+                name=f"expr-tracker-writer-{self.path.name}",
+                daemon=True,
             )
-            timer.daemon = True
-            self._flush_timer = timer
-        timer.start()
+            self._worker.start()
+        self._condition.notify_all()
 
-    def _on_timer(self):
-        with self._lock:
-            self._flush_timer = None
-        self.flush()
-
-    def _cancel_timer(self):
-        with self._lock:
-            timer, self._flush_timer = self._flush_timer, None
-        if timer is not None:
-            timer.cancel()
+    def _run_worker(self):
+        while True:
+            with self._condition:
+                while True:
+                    if self._closing:
+                        return
+                    now = time.monotonic()
+                    deadline = now if self._flush_requested else self._flush_deadline
+                    if deadline is None:
+                        self._condition.wait()
+                        continue
+                    if self._retry_deadline is not None:
+                        deadline = max(deadline, self._retry_deadline)
+                    delay = deadline - now
+                    if delay <= 0:
+                        break
+                    self._condition.wait(delay)
+            self.flush()
 
     def flush(self):
-        """Write the buffer to disk; a failed batch is rolled back and requeued."""
-        self._cancel_timer()
+        """Wait for earlier writes and drain the buffer; log and requeue failures."""
+        check_process(self._owner_pid)
         # Swap and write under one lock: two concurrent flushes would otherwise be
         # able to invert whole batches on disk and break row-ordinal addressing.
-        with self._write_lock:
+        with self._diagnostics, self._write_lock:
             with self._lock:
-                self._first_buffered_time = None
-                if not self.buffer:
+                if self._closed:
                     return
-                records, self.buffer = self.buffer, []
+                self._flush_requested = False
+                self._flush_deadline = None
+                self._first_buffered_time = None
+                if not self._buffer:
+                    return
+                records, self._buffer = self._buffer, deque()
+                self._inflight_records = len(records)
+                self._inflight_bytes, self._queued_bytes = self._queued_bytes, 0
 
             payload = b"".join(line for _, _, line in records)
             # Use the tracked offset instead of stat(): stat costs ms on network mounts
             size_before = self.size
+            failed = False
             try:
                 self._write(payload)
             except Exception as e:
-                logger.error(f"Failed to flush metrics to {self.path}: {e}")
+                failed = True
+                self._diagnostics.add(
+                    "error", f"Failed to flush metrics to {self.path}: {e}"
+                )
                 if not self._truncate_partial_write(size_before):
                     # Rollback failed, so a retry may duplicate lines; force the
                     # reader into merge mode rather than dropping data
-                    self.has_duplicate_steps = True
-                self._requeue(records)
-                self.schedule_timer()
+                    with self._lock:
+                        self.has_duplicate_steps = True
+            # Release the joined copy (and any exception traceback) before capacity
+            # is made available to producers, including during slow metadata writes.
+            del payload
+            if failed:
+                with self._lock:
+                    self._requeue(records)
+                    retry_interval = (
+                        DEFAULT_BUFFER_INTERVAL
+                        if self.max_buffer_seconds is None
+                        else self.max_buffer_seconds
+                    )
+                    self._retry_deadline = time.monotonic() + max(
+                        MIN_RETRY_INTERVAL, retry_interval
+                    )
+                    self._schedule_flush(immediate=self.async_write)
+                    self._condition.notify_all()
                 return
             self._track_flushed(records, size_before)
-        self._save_meta()
+            # Serialize sidecar replacement as well as data writes: both use one
+            # temporary path, and an older snapshot must never replace a newer one.
+            self._save_meta()
 
     def _write(self, payload: bytes):
         """Append, recreating the parent directory once if it disappeared."""
@@ -320,7 +601,7 @@ class JsonlWriter:
             with open(self.path, "ab") as f:
                 f.write(payload)
 
-    def _track_flushed(self, records: list[tuple[int, int, bytes]], offset: int):
+    def _track_flushed(self, records: deque[tuple[int, int, bytes]], offset: int):
         """Account for a batch that just reached the file."""
         with self._lock:
             for step, row, line in records:
@@ -329,6 +610,11 @@ class JsonlWriter:
                 offset += len(line)
             self.size = offset
             self.flushed_step = self.last_step
+            records.clear()
+            self._inflight_records = 0
+            self._inflight_bytes = 0
+            self._retry_deadline = None
+            self._condition.notify_all()
 
     def _halve_index(self):
         """Halve the index resolution instead of letting it grow unbounded."""
@@ -344,21 +630,51 @@ class JsonlWriter:
             os.truncate(self.path, size_before)
             return True
         except Exception as e:
-            logger.warning(f"Could not roll back partial write on {self.path}: {e}")
+            self._diagnostics.add(
+                "warning", f"Could not roll back partial write on {self.path}: {e}"
+            )
             return False
 
-    def _requeue(self, records: list[tuple[int, int, bytes]]):
+    def _requeue(self, records: deque[tuple[int, int, bytes]]):
         with self._lock:
-            self.buffer[:0] = records
-            overflow = len(self.buffer) - self.max_pending_records
-            if overflow > 0:
-                del self.buffer[:overflow]
-                self.dropped += overflow
-                logger.error(
-                    f"Metrics buffer exceeded {self.max_pending_records} records, "
-                    f"dropped {overflow} oldest records."
-                )
+            records.extend(self._buffer)
+            self._buffer = records
+            self._queued_bytes += self._inflight_bytes
+            self._inflight_records = 0
+            self._inflight_bytes = 0
             self._first_buffered_time = time.monotonic()
+
+    def _has_capacity(self, incoming_bytes: int) -> bool:
+        return (
+            len(self._buffer) + self._inflight_records < self.max_pending_records
+            and (
+                self.max_pending_bytes is None
+                or self._queued_bytes + self._inflight_bytes + incoming_bytes
+                <= self.max_pending_bytes
+            )
+        )
+
+    def _cap_buffer(self, incoming_bytes: int) -> tuple[bool, str]:
+        """After write failure, evict oldest queued records to fit one new line."""
+        dropped = dropped_bytes = 0
+        while self._buffer and not self._has_capacity(incoming_bytes):
+            _, _, line = self._buffer.popleft()
+            size = len(line)
+            self._queued_bytes -= size
+            dropped += 1
+            dropped_bytes += size
+        accepted = self._has_capacity(incoming_bytes)
+        if not accepted:  # In-flight records cannot be evicted; drop the new line.
+            dropped += 1
+            dropped_bytes += incoming_bytes
+        self.dropped += dropped
+        self.dropped_bytes += dropped_bytes
+        message = (
+            f"Metrics buffer exceeded {self.max_pending_records} records or "
+            f"max_pending_bytes={self.max_pending_bytes}, "
+            f"dropped {dropped} oldest queued records ({dropped_bytes} bytes)."
+        )
+        return accepted, message
 
     # ------------------------------------------------------------------ meta
 
@@ -381,14 +697,15 @@ class JsonlWriter:
             }
         tmp = self.meta_path.with_suffix(".json.tmp")
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
+            with open(tmp, "w", encoding="utf-8", errors="backslashreplace") as f:
                 json.dump(meta, f, ensure_ascii=False)
             os.replace(tmp, self.meta_path)
         except Exception as e:
-            logger.warning(f"Failed to write {self.meta_path}: {e}")
+            self._diagnostics.add("warning", f"Failed to write {self.meta_path}: {e}")
 
     def reader(self) -> JsonlReader:
         """Return a reader sharing this writer's in-memory index."""
+        check_process(self._owner_pid)
         return JsonlReader(
             self.path,
             index=self.index,
@@ -396,9 +713,50 @@ class JsonlWriter:
         )
 
     def close(self):
-        self._cancel_timer()
-        self.flush()
-        self._save_meta(force=True)
+        """Reject new writes, join the worker, and attempt one final drain."""
+        check_process(self._owner_pid)
+        if self._worker is threading.current_thread():
+            raise RuntimeError("Cannot close a writer from its own background worker.")
+        with self._diagnostics:
+            with self._condition:
+                if (
+                    in_diagnostic_callback()
+                    and self._worker is not None
+                    and self._worker.is_alive()
+                ):
+                    raise RuntimeError(
+                        "Cannot close a writer from a diagnostic sink while its "
+                        "background worker is active."
+                    )
+                if self._closing:
+                    self._condition.wait_for(lambda: self._closed)
+                    return
+                self._closing = True
+                self._flush_requested = False
+                self._flush_deadline = None
+                worker = self._worker
+                self._condition.notify_all()
+            try:
+                # No writer locks may be held while waiting for an in-flight flush.
+                if worker is not None:
+                    worker.join()
+                self.flush()
+            finally:
+                with self._write_lock:
+                    try:
+                        self._save_meta(force=True)
+                        with self._lock:
+                            if self._buffer:
+                                self._diagnostics.add(
+                                    "error",
+                                    f"Closing {self.path} with {len(self._buffer)} "
+                                    "unwritten records after a failed final flush "
+                                    f"({self._queued_bytes} bytes)."
+                                )
+                    finally:
+                        with self._condition:
+                            self._closed = True
+                            self._condition.notify_all()
 
 
 def _peek_step(raw: bytes) -> int | None:

@@ -47,7 +47,6 @@ def build(tmp_path, rules):
         project="p",
         name="perf",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=200,
         on_commit=engine.on_step if engine else None,
     )

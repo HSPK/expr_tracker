@@ -21,7 +21,6 @@ def make(tmp_path):
 
     def factory(name="run", **options):
         store = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         store.init(project="correct", name=name, dir=str(tmp_path), **options)
         created.append(store)
         return store

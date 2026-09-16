@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import sqlite3
 import time
 from pathlib import Path
 
@@ -31,9 +33,7 @@ def main():
 @click.option(
     "--no-dotenv", is_flag=True, help="Skip loading .env from the current directory"
 )
-def alert(
-    msg: str, title: str, level: str, channels: tuple[str, ...], no_dotenv: bool
-):
+def alert(msg: str, title: str, level: str, channels: tuple[str, ...], no_dotenv: bool):
     """Send a manual alert, loading the current directory's .env by default."""
     if not no_dotenv:
         try:
@@ -93,7 +93,26 @@ def history(
     "unnamed one.",
 )
 @click.option("--step-range", default=None, help="start:end (end exclusive)")
-def trace(run: str, output: str, stream: str | None, step_range: str | None):
+@click.option(
+    "--time-range",
+    default=None,
+    help="start:end in absolute epoch seconds; select overlapping spans "
+    "(end exclusive, either bound may be omitted).",
+)
+@click.option(
+    "--temp-dir",
+    type=click.Path(exists=True, file_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="Directory for the temporary SQLite spool database; system temp by default.",
+)
+def trace(
+    run: str,
+    output: str,
+    stream: str | None,
+    step_range: str | None,
+    time_range: str | None,
+    temp_dir: Path | None,
+):
     """Export recorded spans as a Chrome Trace.
 
     Open the result at https://ui.perfetto.dev or chrome://tracing. It can be
@@ -102,7 +121,17 @@ def trace(run: str, output: str, stream: str | None, step_range: str | None):
     wanted: str | list[str] | None = "*"
     if stream:
         wanted = [None if s in ("default", "") else s for s in stream.split(",")]
-    count = write_trace(run, output, wanted, step_range=_parse_range(step_range))
+    try:
+        count = write_trace(
+            run,
+            output,
+            wanted,
+            step_range=_parse_range(step_range),
+            time_range=_parse_time_range(time_range),
+            temp_dir=temp_dir,
+        )
+    except (OSError, sqlite3.Error, ValueError) as error:
+        raise click.ClickException(f"Trace export failed: {error}") from error
     click.echo(f"wrote {count} span(s) to {output}")
 
 
@@ -196,8 +225,29 @@ def _replay_engine(rule, context, sink: list) -> AlertEngine:
 def _parse_range(value: str | None):
     if not value:
         return None
-    start, _, end = value.partition(":")
-    return (int(start) if start else None, int(end) if end else None)
+    try:
+        start, end = value.split(":")
+        return (int(start) if start else None, int(end) if end else None)
+    except ValueError as exc:
+        raise click.BadParameter(
+            "expected start:end with integer bounds", param_hint="--step-range"
+        ) from exc
+
+
+def _parse_time_range(value: str | None):
+    if not value:
+        return None
+    try:
+        start, end = value.split(":")
+        bounds = (float(start) if start else None, float(end) if end else None)
+        if any(bound is not None and not math.isfinite(bound) for bound in bounds):
+            raise ValueError("non-finite bound")
+        return bounds
+    except ValueError as exc:
+        raise click.BadParameter(
+            "expected start:end with finite epoch-second bounds",
+            param_hint="--time-range",
+        ) from exc
 
 
 def _columns(rows: list[dict]) -> list[str]:

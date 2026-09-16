@@ -3,10 +3,14 @@
 import asyncio
 import contextlib
 import json
+import math
 import sys
 import threading
 import time
+import timeit
 import types
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -22,7 +26,6 @@ def run(tmp_path):
     created = []
 
     def factory(**options):
-        options.setdefault("max_open_seconds", None)
         created.append(
             et.init(
                 project="pg",
@@ -52,10 +55,33 @@ def depth_of(line):
 
 
 def span_records(run_obj):
+    run_obj.history.flush()
     path = run_obj.history.log_dir / spans_filename(None, True)
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+@pytest.fixture
+def measured_span(monkeypatch):
+    now = 0.0
+    monkeypatch.setattr(time, "perf_counter", lambda: now)
+
+    def measure(name, seconds, metrics):
+        nonlocal now
+        with et.span(name, plugins=[lambda span: metrics]) as span:
+            now += seconds
+        return span
+
+    return measure
+
+
+@pytest.fixture
+def resource_span():
+    def make(started_at=1.0):
+        return types.SimpleNamespace(started_at=started_at, duration_ms=1000.0)
+
+    return make
 
 
 # --------------------------------------------------------------------------- #
@@ -563,9 +589,10 @@ def test_the_warning_cache_cannot_grow_without_bound(monkeypatch):
     assert len(spans_mod._WARNED) <= 257
 
 
-def test_a_plugin_cannot_overwrite_the_span_timing(run):
+@pytest.mark.parametrize("span_count", [False, True])
+def test_a_plugin_cannot_overwrite_the_span_timing(run, span_count):
     """time_ms and count are the span's contract, not a plugin's to set."""
-    run()
+    run(span_count=span_count)
     with et.span(
         "a", plugins=[lambda s: {TIME_METRIC: 999.0, COUNT_METRIC: 42, "ok": 7}]
     ) as sp:
@@ -573,9 +600,13 @@ def test_a_plugin_cannot_overwrite_the_span_timing(run):
     et.log({"loss": 1.0})
     row = et.history(1)[0]
     assert row[span_metric(TIME_METRIC, "a")] == sp.duration_ms != 999.0
-    assert row[span_metric(COUNT_METRIC, "a")] == 1
+    if span_count:
+        assert row[span_metric(COUNT_METRIC, "a")] == 1
+    else:
+        assert span_metric(COUNT_METRIC, "a") not in row
     assert row[span_metric("ok", "a")] == 7  # the plugin's own metrics still land
     assert TIME_METRIC not in sp.metrics
+    assert COUNT_METRIC not in sp.metrics
 
 
 def test_a_span_that_never_began_records_nothing(run):
@@ -655,16 +686,117 @@ def test_a_plugin_sees_the_duration_at_end(run):
     assert seen["d"] > 5
 
 
-def test_repeated_spans_sum_their_plugin_metrics(run):
+@pytest.mark.parametrize("span_count", [False, True])
+def test_repeated_spans_sum_their_plugin_metrics(run, span_count):
     """Plugin metrics ride the same accumulate path as duration_ms."""
-    run()
+    run(span_count=span_count)
     for _ in range(3):
         with et.span("a", plugins=[Recorder(2.0)]):
             pass
     et.log({"loss": 1.0})
     row = et.history(1)[0]
     assert row[span_metric("thing", "a")] == 6.0
-    assert row[span_metric(COUNT_METRIC, "a")] == 3
+    if span_count:
+        assert row[span_metric(COUNT_METRIC, "a")] == 3
+    else:
+        assert span_metric(COUNT_METRIC, "a") not in row
+
+
+@pytest.mark.parametrize("spans", [False, True])
+@pytest.mark.parametrize("span_count", [False, True])
+def test_plugin_gauges_keep_their_mean_and_peak_semantics(
+    run, measured_span, spans, span_count
+):
+    instance = run(spans=spans, span_count=span_count)
+    first = {
+        "cpu_percent": 25.0,
+        "gpu_percent": 60.0,
+        "gpu_mem_peak_mb": 512.0,
+        "gpu_mem_used_mb": 4096.0,
+        "cpu_time_ms": 250.0,
+        "gpu_mem_delta_mb": 64.0,
+        "items": 2,
+    }
+    second = {
+        "cpu_percent": 75.0,
+        "gpu_percent": 20.0,
+        "gpu_mem_peak_mb": 256.0,
+        "gpu_mem_used_mb": 2048.0,
+        "cpu_time_ms": 2250.0,
+        "gpu_mem_delta_mb": -32.0,
+        "items": 7,
+    }
+    a = measured_span("train/work", 1, first)
+    b = measured_span("train/work", 3, second)
+    measured_span("eval/work", 2, {"gpu_percent": 90.0, "gpu_mem_peak_mb": 128.0})
+    et.log({})
+    row = et.history(1)[0]
+    assert row["time_ms/train/work"] == 4000
+    assert row["cpu_percent/train/work"] == 62.5
+    assert row["gpu_percent/train/work"] == 30.0
+    assert row["gpu_mem_peak_mb/train/work"] == 512.0
+    assert row["gpu_mem_used_mb/train/work"] == 4096.0
+    assert row["cpu_time_ms/train/work"] == 2500.0
+    assert row["gpu_mem_delta_mb/train/work"] == 32.0
+    assert row["items/train/work"] == 9
+    assert row["gpu_percent/eval/work"] == 90.0
+    assert row["gpu_mem_peak_mb/eval/work"] == 128.0
+    if span_count:
+        assert row["count/train/work"] == 2
+    else:
+        assert "count/train/work" not in row
+    assert a.metrics == first and b.metrics == second
+    et.finish()
+    if spans:
+        assert [record["metrics"] for record in span_records(instance)][:2] == [
+            first,
+            second,
+        ]
+
+
+def test_weighted_means_ignore_spans_without_the_measurement(run, measured_span):
+    run()
+    measured_span("work", 1, {"gpu_percent": 20})
+    measured_span("work", 10, {})
+    measured_span("work", 3, {"gpu_percent": 80})
+    row = et.history(1)[0]
+    assert row["time_ms/work"] == 14000
+    assert row["gpu_percent/work"] == 65
+
+
+def test_zero_duration_spans_do_not_bias_a_weighted_mean(run, measured_span):
+    run()
+    measured_span("work", 0, {"gpu_percent": 10})
+    measured_span("work", 0, {"gpu_percent": 20})
+    assert et.history(1)[0]["gpu_percent/work"] == 20
+    measured_span("work", 2, {"gpu_percent": 40})
+    measured_span("work", 0, {"gpu_percent": 100})
+    assert et.history(1)[0]["gpu_percent/work"] == 40
+
+
+def test_weighted_means_reset_on_commit_and_explicit_overwrite(run, measured_span):
+    instance = run()
+    measured_span("work", 1, {"gpu_percent": 10})
+    et.log({})
+    assert instance.history._open_weights == {}
+    measured_span("work", 3, {"gpu_percent": 90})
+    assert et.history(1)[0]["gpu_percent/work"] == 90
+    et.log({"gpu_percent/work": 15}, commit=False)
+    measured_span("work", 1, {"gpu_percent": 30})
+    assert et.history(1)[0]["gpu_percent/work"] == 30
+    et.log({}, step=5)
+    measured_span("work", 1, {"gpu_percent": 70})
+    assert et.history(1)[0]["gpu_percent/work"] == 70
+    et.finish()
+    assert instance.history._open_weights == {}
+
+
+@pytest.mark.parametrize("values", [(float("nan"), 512.0), (512.0, float("nan"))])
+def test_peak_aggregation_preserves_nan(run, measured_span, values):
+    run()
+    for value in values:
+        measured_span("work", 1, {"gpu_mem_peak_mb": value})
+    assert math.isnan(et.history(1)[0]["gpu_mem_peak_mb/work"])
 
 
 def test_plugin_metrics_reach_the_trace(run, tmp_path):
@@ -700,6 +832,23 @@ def test_cpu_time_sees_a_sleeping_span_as_idle(run):
     with et.span("idle", plugins=[CpuTime()]) as sp:
         time.sleep(0.05)
     assert sp.metrics["cpu_percent"] < 30
+
+
+def test_cpu_time_aggregates_by_duration_not_call_count(run, monkeypatch):
+    now = used = 0.0
+    monkeypatch.setattr(time, "perf_counter", lambda: now)
+    monkeypatch.setattr(time, "process_time", lambda: used)
+    run()
+    plugin = CpuTime()
+    with et.span("work", plugins=[plugin]):
+        now += 1
+        used += 0.25
+    with et.span("work", plugins=[plugin]):
+        now += 3
+        used += 2.25
+    row = et.history(1)[0]
+    assert row["cpu_time_ms/work"] == 2500
+    assert row["cpu_percent/work"] == 62.5
 
 
 def test_cpu_time_nests_without_double_counting(run):
@@ -742,8 +891,89 @@ def test_cpu_time_keeps_threads_apart(run):
         t.join()
     assert len(depths) == 4
     assert all("cpu_time_ms" in m for m in depths.values())
-    assert plugin._stack  # per-thread frames, all balanced back to empty
-    assert all(not frames for frames in plugin._stack.values())
+    assert plugin._active == {}
+
+
+def test_cpu_time_pairs_non_lifo_spans_by_identity(monkeypatch, resource_span):
+    plugin = CpuTime()
+    a, b = resource_span(), resource_span()
+    assert a == b and a is not b  # unhashable, value-equal objects still differ
+    clock = iter([0.0, 1.0, 2.0, 4.0])
+    monkeypatch.setattr(time, "process_time", lambda: next(clock))
+    plugin.start(a)
+    plugin.start(b)
+    assert plugin.end(a) == {"cpu_time_ms": 2000.0, "cpu_percent": 200.0}
+    assert plugin.end(b) == {"cpu_time_ms": 3000.0, "cpu_percent": 300.0}
+    assert plugin.end(a) == {}
+    assert plugin._active == {}
+
+
+def test_cpu_time_pairs_overlapping_async_tasks(run, monkeypatch):
+    run()
+    now = 1.0
+    plugin = CpuTime()
+    monkeypatch.setattr(time, "process_time", lambda: now)
+    monkeypatch.setattr(time, "perf_counter", lambda: now)
+
+    async def main():
+        a_started, b_started, a_ended = (asyncio.Event() for _ in range(3))
+
+        async def first():
+            nonlocal now
+            async with et.span("a", plugins=[plugin]) as span:
+                a_started.set()
+                await b_started.wait()
+                now = 3.0
+            a_ended.set()
+            return span.metrics
+
+        async def second():
+            nonlocal now
+            await a_started.wait()
+            now = 2.0
+            async with et.span("b", plugins=[plugin]) as span:
+                b_started.set()
+                await a_ended.wait()
+                now = 5.0
+            return span.metrics
+
+        return await asyncio.gather(first(), second())
+
+    a, b = asyncio.run(main())
+    assert a == {"cpu_time_ms": 2000.0, "cpu_percent": 100.0}
+    assert b == {"cpu_time_ms": 3000.0, "cpu_percent": 100.0}
+    assert plugin._active == {}
+
+
+def test_cpu_time_can_end_on_another_thread(monkeypatch, resource_span):
+    clock = iter([0.0, 2.0])
+    monkeypatch.setattr(time, "process_time", lambda: next(clock))
+    plugin, span = CpuTime(), resource_span()
+    plugin.start(span)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(plugin.end, span).result(5)["cpu_time_ms"] == 2000.0
+    assert plugin._active == {}
+
+
+@pytest.mark.parametrize("hook", ["start", "end"])
+def test_cpu_time_failures_do_not_consume_other_spans(monkeypatch, resource_span, hook):
+    plugin = CpuTime()
+    a, b = resource_span(), resource_span()
+    monkeypatch.setattr(time, "process_time", lambda: 1.0)
+    plugin.start(a)
+    if hook == "end":
+        plugin.start(b)
+
+    def fail():
+        raise RuntimeError("clock failed")
+
+    monkeypatch.setattr(time, "process_time", fail)
+    with pytest.raises(RuntimeError, match="clock failed"):
+        getattr(plugin, hook)(b)
+    assert plugin.end(b) == {}
+    monkeypatch.setattr(time, "process_time", lambda: 3.0)
+    assert plugin.end(a)["cpu_time_ms"] == 2000.0
+    assert plugin._active == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -757,7 +987,11 @@ class FakeCuda:
     def __init__(self, available=True):
         self.allocated = 0
         self.peak = 0
+        self.device = 0
         self._available = available
+
+    def current_device(self):
+        return self.device
 
     def is_available(self):
         return self._available
@@ -777,6 +1011,15 @@ class FakeCuda:
 
     def reset_peak_memory_stats(self, device=None):
         self.peak = self.allocated
+
+
+class FakeDevice:
+    def __init__(self, device):
+        if isinstance(device, FakeDevice):
+            self.type, self.index = device.type, device.index
+        else:
+            self.type, _, index = device.partition(":")
+            self.index = int(index) if index else None
 
 
 class FastFakeCuda(FakeCuda):
@@ -807,6 +1050,7 @@ def fake_torch(monkeypatch):
     cuda = FakeCuda()
     module = types.ModuleType("torch")
     module.cuda = cuda
+    module.device = FakeDevice
     monkeypatch.setitem(sys.modules, "torch", module)
     return cuda
 
@@ -855,6 +1099,18 @@ def test_torch_memory_reports_the_peak_and_the_delta(run, fake_torch):
         fake_torch.free(60 * MB)
     assert sp.metrics["gpu_mem_peak_mb"] == 100.0
     assert sp.metrics["gpu_mem_delta_mb"] == 40.0
+
+
+def test_torch_memory_aggregates_repeated_spans_by_peak(run, fake_torch):
+    run()
+    plugin = TorchMemory()
+    for megabytes in (512, 256):
+        with et.span("work", plugins=[plugin]):
+            fake_torch.allocate(megabytes * MB)
+            fake_torch.free(megabytes * MB)
+    row = et.history(1)[0]
+    assert row["gpu_mem_peak_mb/work"] == 512.0
+    assert row["gpu_mem_delta_mb/work"] == 0.0
 
 
 def test_torch_memory_carries_a_peak_that_predates_a_child(run, fake_torch):
@@ -957,6 +1213,167 @@ def test_torch_memory_passes_the_device_through(run, fake_torch):
     with et.span("a", plugins=[TorchMemory(device=3)]):
         pass
     assert seen == [3, 3]
+
+
+@pytest.mark.parametrize("separate_plugins", [False, True])
+@pytest.mark.parametrize("end_on_worker", [False, True])
+def test_torch_memory_pairs_overlapping_spans(
+    fake_torch, resource_span, separate_plugins, end_on_worker
+):
+    a, b = resource_span(), resource_span()
+    first = TorchMemory()
+    second = TorchMemory() if separate_plugins else first
+    first.start(a)
+    fake_torch.allocate(100 * MB)
+    second.start(b)
+    fake_torch.allocate(50 * MB)
+    if end_on_worker:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            measured_a = pool.submit(first.end, a).result(5)
+    else:
+        measured_a = first.end(a)
+    fake_torch.allocate(100 * MB)
+    measured_b = second.end(b)
+    assert measured_a == {"gpu_mem_peak_mb": 150.0, "gpu_mem_delta_mb": 150.0}
+    assert measured_b == {"gpu_mem_peak_mb": 250.0, "gpu_mem_delta_mb": 150.0}
+    assert first._active == second._active == pl._TORCH_WINDOWS == {}
+
+
+def test_torch_memory_shares_resets_across_tasks_and_device_aliases(run, fake_torch):
+    run()
+
+    async def main():
+        a_started, b_started, a_ended = (asyncio.Event() for _ in range(3))
+
+        async def first():
+            async with et.span("a", plugins=[TorchMemory()]) as span:
+                fake_torch.allocate(512 * MB)
+                fake_torch.free(512 * MB)
+                a_started.set()
+                await b_started.wait()
+            a_ended.set()
+            return span.metrics
+
+        async def second():
+            await a_started.wait()
+            async with et.span("b", plugins=[TorchMemory("cuda:0")]) as span:
+                fake_torch.allocate(64 * MB)
+                fake_torch.free(64 * MB)
+                b_started.set()
+                await a_ended.wait()
+            return span.metrics
+
+        return await asyncio.gather(first(), second())
+
+    a, b = asyncio.run(main())
+    assert a["gpu_mem_peak_mb"] == 512.0
+    assert b["gpu_mem_peak_mb"] == 64.0
+    assert pl._TORCH_WINDOWS == {}
+
+
+@pytest.mark.parametrize("device", [None, 0, "cuda", "cuda:0", FakeDevice("cuda:0")])
+def test_torch_memory_coordinates_device_aliases(fake_torch, resource_span, device):
+    a, b = resource_span(), resource_span()
+    first, second = TorchMemory(device), TorchMemory(0)
+    first.start(a)
+    fake_torch.allocate(512 * MB)
+    fake_torch.free(512 * MB)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(second.start, b).result(5)
+    fake_torch.allocate(64 * MB)
+    fake_torch.free(64 * MB)
+    assert first.end(a)["gpu_mem_peak_mb"] == 512.0
+    assert second.end(b)["gpu_mem_peak_mb"] == 64.0
+    assert pl._TORCH_WINDOWS == {}
+
+
+def test_torch_memory_pins_the_start_device_and_separates_devices(
+    fake_torch, resource_span
+):
+    devices = [FakeCuda(), FakeCuda()]
+    fake_torch.memory_allocated = lambda device: devices[device].allocated
+    fake_torch.max_memory_allocated = lambda device: devices[device].peak
+    fake_torch.reset_peak_memory_stats = lambda device: devices[
+        device
+    ].reset_peak_memory_stats()
+    plugin = TorchMemory()
+    a, b = resource_span(), resource_span()
+    plugin.start(a)
+    devices[0].allocate(512 * MB)
+    devices[0].free(512 * MB)
+    fake_torch.device = 1
+    plugin.start(b)
+    devices[1].allocate(32 * MB)
+    assert plugin.end(a) == {"gpu_mem_peak_mb": 512.0, "gpu_mem_delta_mb": 0.0}
+    assert plugin.end(b) == {"gpu_mem_peak_mb": 32.0, "gpu_mem_delta_mb": 32.0}
+    assert pl._TORCH_WINDOWS == {}
+
+
+def test_torch_memory_serializes_resets_with_other_span_ends(
+    fake_torch, monkeypatch, resource_span
+):
+    a, b = resource_span(), resource_span()
+    first, second = TorchMemory(), TorchMemory()
+    first.start(a)
+    fake_torch.allocate(512 * MB)
+    fake_torch.free(512 * MB)
+    entered, release, attempted = (threading.Event() for _ in range(3))
+    reset = fake_torch.reset_peak_memory_stats
+
+    def blocking_reset(device):
+        entered.set()
+        assert release.wait(5)
+        reset(device)
+
+    def end():
+        attempted.set()
+        return first.end(a)
+
+    monkeypatch.setattr(fake_torch, "reset_peak_memory_stats", blocking_reset)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        starting = pool.submit(second.start, b)
+        try:
+            assert entered.wait(5)
+            ending = pool.submit(end)
+            assert attempted.wait(5)
+            assert not ending.done()
+        finally:
+            release.set()
+        starting.result(5)
+        assert ending.result(5)["gpu_mem_peak_mb"] == 512.0
+    fake_torch.allocate(64 * MB)
+    fake_torch.free(64 * MB)
+    assert second.end(b)["gpu_mem_peak_mb"] == 64.0
+    assert pl._TORCH_WINDOWS == {}
+
+
+@pytest.mark.parametrize("failure", ["read", "reset", "partial_reset", "end"])
+def test_torch_memory_cleans_failed_spans_without_losing_other_peaks(
+    fake_torch, monkeypatch, resource_span, failure
+):
+    plugin = TorchMemory()
+    a, b = resource_span(), resource_span()
+    plugin.start(a)
+    fake_torch.allocate(512 * MB)
+    fake_torch.free(512 * MB)
+    if failure == "end":
+        plugin.start(b)
+
+    def fail(device):
+        if failure == "partial_reset":
+            fake_torch.peak = fake_torch.allocated
+        raise RuntimeError("allocator failed")
+
+    method = "reset_peak_memory_stats" if "reset" in failure else "memory_allocated"
+    with monkeypatch.context() as patch:
+        patch.setattr(fake_torch, method, fail)
+        with pytest.raises(RuntimeError, match="allocator failed"):
+            (plugin.end if failure == "end" else plugin.start)(b)
+    assert plugin.end(b) == {}
+    fake_torch.allocate(32 * MB)
+    fake_torch.free(32 * MB)
+    assert plugin.end(a)["gpu_mem_peak_mb"] == 512.0
+    assert plugin._active == pl._TORCH_WINDOWS == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -1080,11 +1497,10 @@ def test_gpu_stats_starts_one_thread_only(run, fake_nvml):
     assert len(alive) == 1
 
 
-def test_gpu_stats_rejects_a_bad_interval():
+@pytest.mark.parametrize("interval", [0, -1, float("nan"), float("inf")])
+def test_gpu_stats_rejects_a_bad_interval(interval):
     with pytest.raises(ValueError):
-        GpuStats(interval=0)
-    with pytest.raises(ValueError):
-        GpuStats(interval=-1)
+        GpuStats(interval=interval)
 
 
 def test_gpu_stats_degrades_without_pynvml(run, monkeypatch):
@@ -1141,6 +1557,396 @@ def test_a_stopped_sampler_restarts_on_the_next_span(run, fake_nvml):
     with et.span("b", plugins=[plugin]):
         time.sleep(0.03)
     assert plugin._sampler._thread.is_alive()
+
+
+def test_gpu_stats_keeps_the_full_window_after_history_eviction(
+    fake_nvml, resource_span
+):
+    plugin = GpuStats(interval=3600)
+    span = resource_span()
+    plugin.start(span)
+    sampler = plugin._sampler
+    window = next(iter(sampler._active.values()))
+    for tick in range(1, 10001):
+        sampler._record(
+            float(tick),
+            90.0 if tick <= 100 else 10.0,
+            (900 if tick == 1 else 2) * MB,
+        )
+    assert len(sampler.samples) == sampler.samples.maxlen == 64
+    assert len(sampler._active) == 1
+    assert next(iter(sampler._active.values())) is window
+    assert window.count == 10000 and not hasattr(window, "__dict__")
+    assert plugin.end(span) == {"gpu_percent": 10.8, "gpu_mem_used_mb": 900.0}
+    assert sampler._active == {}
+
+
+@pytest.mark.parametrize("separate_plugins", [False, True])
+def test_gpu_stats_tracks_concurrent_windows_independently(
+    fake_nvml, resource_span, separate_plugins
+):
+    first = GpuStats(interval=3600)
+    second = GpuStats(interval=3600) if separate_plugins else first
+    a, b = resource_span(1), resource_span(3)
+    first.start(a)
+    sampler = first._sampler
+    sampler._record(2, 10, 900 * MB)
+    second.start(b)
+    sampler._record(4, 30, 50 * MB)
+    assert first.end(a) == {"gpu_percent": 20.0, "gpu_mem_used_mb": 900.0}
+    assert len(sampler._active) == 1
+    sampler._record(5, 50, 70 * MB)
+    assert second.end(b) == {"gpu_percent": 40.0, "gpu_mem_used_mb": 70.0}
+    assert sampler._active == {}
+    assert first.end(a) == {} and second.end(b) == {}
+    assert fake_nvml.reads == 0
+
+
+def test_gpu_stats_two_plugins_can_measure_the_same_span(fake_nvml, resource_span):
+    a, b = GpuStats(interval=3600), GpuStats(interval=3600)
+    span = resource_span()
+    a.start(span)
+    b.start(span)
+    a._sampler._record(2, 70, 12 * MB)
+    assert (
+        a.end(span)
+        == b.end(span)
+        == {
+            "gpu_percent": 70.0,
+            "gpu_mem_used_mb": 12.0,
+        }
+    )
+    assert a._sampler._active == {}
+
+
+def test_gpu_stats_pairs_overlapping_async_tasks(run, fake_nvml):
+    run()
+    plugin = GpuStats(interval=3600)
+
+    async def main():
+        a_started, b_started, a_ended = (asyncio.Event() for _ in range(3))
+
+        async def first():
+            async with et.span("a", plugins=[plugin]) as span:
+                plugin._sampler._record(time.time(), 10, 900 * MB)
+                a_started.set()
+                await b_started.wait()
+            a_ended.set()
+            return span.metrics
+
+        async def second():
+            await a_started.wait()
+            async with et.span("b", plugins=[plugin]) as span:
+                plugin._sampler._record(time.time(), 30, 50 * MB)
+                b_started.set()
+                await a_ended.wait()
+                plugin._sampler._record(time.time(), 50, 70 * MB)
+            return span.metrics
+
+        return await asyncio.gather(first(), second())
+
+    a, b = asyncio.run(main())
+    assert a == {"gpu_percent": 20.0, "gpu_mem_used_mb": 900.0}
+    assert b == {"gpu_percent": 40.0, "gpu_mem_used_mb": 70.0}
+    assert plugin._sampler._active == {}
+
+
+def test_gpu_stats_excludes_samples_during_start_hooks(run, fake_nvml):
+    run()
+    plugin = GpuStats(interval=3600)
+
+    class SlowStart:
+        def start(self, span):
+            plugin._sampler._record(time.time(), 100, 900 * MB)
+
+    with et.span("work", plugins=[plugin, SlowStart()]) as span:
+        plugin._sampler._record(time.time(), 20, 5 * MB)
+    assert span.metrics == {"gpu_percent": 20.0, "gpu_mem_used_mb": 5.0}
+
+
+def test_gpu_stats_window_remains_a_bounded_diagnostic_api(fake_nvml):
+    sampler = GpuStats(interval=3600)._sampler
+    for tick in range(100):
+        sampler._record(tick, tick, tick * MB)
+    assert sampler.window(97, 98) == [(98, 98, 98 * MB), (97, 97, 97 * MB)]
+    assert sampler.window(0, 1) == []
+
+
+def test_gpu_stats_end_does_not_scan_sample_history(fake_nvml, resource_span):
+    class NoScanDeque(deque):
+        def __iter__(self):
+            raise AssertionError("span metrics must not scan history")
+
+        def __getitem__(self, index):
+            raise AssertionError("span metrics must not index history")
+
+    plugin, span = GpuStats(interval=3600), resource_span()
+    plugin.start(span)
+    plugin._sampler.samples = NoScanDeque(maxlen=64)
+    for tick in range(1, 1001):
+        plugin._sampler._record(tick, 20, 8 * MB)
+    assert plugin.end(span) == {"gpu_percent": 20.0, "gpu_mem_used_mb": 8.0}
+
+
+@pytest.mark.parametrize("hook", ["start", "end"])
+def test_gpu_stats_failure_does_not_consume_other_windows(
+    fake_nvml, monkeypatch, resource_span, hook
+):
+    plugin = GpuStats(interval=3600)
+    a, b = resource_span(), resource_span()
+    plugin.start(a)
+    plugin._sampler._record(2, 10, 900 * MB)
+    if hook == "end":
+        plugin.start(b)
+
+    def fail():
+        raise RuntimeError("NVML failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            plugin._sampler, "_ensure_running" if hook == "start" else "read", fail
+        )
+        with pytest.raises(RuntimeError, match="NVML failed"):
+            getattr(plugin, hook)(b)
+    assert plugin.end(b) == {}
+    assert plugin.end(a) == {"gpu_percent": 10.0, "gpu_mem_used_mb": 900.0}
+    assert plugin._sampler._active == {}
+
+
+def test_gpu_stats_recovers_from_thread_start_failure(
+    fake_nvml, monkeypatch, resource_span
+):
+    plugin, a, b = GpuStats(interval=3600), resource_span(), resource_span()
+
+    def fail(thread):
+        raise RuntimeError("cannot start thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", fail)
+        with pytest.raises(RuntimeError, match="cannot start thread"):
+            plugin.start(a)
+    assert plugin.end(a) == {}
+    assert plugin._sampler._active == {}
+    plugin.start(b)
+    assert plugin.end(b)["gpu_percent"] == 50.0
+
+
+def test_gpu_stats_failed_initialization_does_not_register_a_window(
+    fake_nvml, resource_span
+):
+    plugin, a, b = GpuStats(interval=3600), resource_span(), resource_span()
+    fake_nvml.fail = True
+    with pytest.raises(RuntimeError, match="no driver"):
+        plugin.start(a)
+    assert plugin.end(a) == {}
+    assert plugin._sampler._active == {}
+    assert plugin._sampler._thread is None and fake_nvml.reads == 0
+    fake_nvml.fail = False
+    plugin.start(b)
+    assert plugin.end(b)["gpu_percent"] == 50.0
+
+
+def test_gpu_stats_sampling_failure_discards_incomplete_windows(
+    fake_nvml, monkeypatch, resource_span
+):
+    plugin, span = GpuStats(interval=0.001), resource_span()
+    armed, entered, release = (threading.Event() for _ in range(3))
+    warnings = []
+
+    def fail(handle):
+        if not armed.is_set():
+            return types.SimpleNamespace(gpu=fake_nvml.util)
+        entered.set()
+        assert release.wait(5)
+        raise RuntimeError("device disappeared")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fake_nvml, "nvmlDeviceGetUtilizationRates", fail)
+        patch.setattr(pl.logger, "warning", warnings.append)
+        try:
+            plugin.start(span)
+            armed.set()
+            assert entered.wait(5)
+        finally:
+            release.set()
+        plugin._sampler._thread.join(5)
+        assert not plugin._sampler._thread.is_alive()
+    assert plugin._sampler._active == {}
+    assert plugin.end(span) == {}
+    assert warnings == ["NVML sampling stopped: device disappeared"]
+    later = resource_span()
+    plugin.start(later)
+    assert plugin.end(later)["gpu_percent"] == 50.0
+
+
+@pytest.mark.parametrize("boundary", ["start", "end"])
+def test_gpu_stats_serializes_samples_with_span_boundaries(
+    fake_nvml, monkeypatch, resource_span, boundary
+):
+    plugin, span = GpuStats(interval=3600), resource_span()
+    sampler = plugin._sampler
+    sampler.ensure_running()
+    if boundary == "end":
+        plugin.start(span)
+    entered, release, attempted = (threading.Event() for _ in range(3))
+
+    def blocking_read():
+        entered.set()
+        assert release.wait(5)
+        return 10.0, 900 * MB
+
+    def sample():
+        with sampler._lock:
+            util, used = sampler.read()
+            sampler._record(2, util, used)
+
+    def hook():
+        attempted.set()
+        return getattr(plugin, boundary)(span)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        with monkeypatch.context() as patch:
+            patch.setattr(sampler, "read", blocking_read)
+            reading = pool.submit(sample)
+            try:
+                assert entered.wait(5)
+                changing = pool.submit(hook)
+                assert attempted.wait(5)
+                assert not changing.done()
+            finally:
+                release.set()
+            reading.result(5)
+            measured = changing.result(5)
+        if boundary == "start":
+            measured = plugin.end(span)
+            assert measured == {"gpu_percent": 50.0, "gpu_mem_used_mb": 2.0}
+        else:
+            assert measured == {"gpu_percent": 10.0, "gpu_mem_used_mb": 900.0}
+    assert sampler._active == {}
+
+
+def test_stop_samplers_waits_for_inflight_reads_and_serializes_restart(
+    fake_nvml, monkeypatch, resource_span
+):
+    plugin, span = GpuStats(interval=0.001), resource_span()
+    sampler = plugin._sampler
+    armed, entered, release, attempted = (threading.Event() for _ in range(4))
+
+    def blocking_read():
+        if not armed.is_set():
+            return 50.0, 2 * MB
+        entered.set()
+        assert release.wait(5)
+        return 100.0, 900 * MB
+
+    monkeypatch.setattr(sampler, "read", blocking_read)
+    plugin.start(span)
+    armed.set()
+    old_thread = sampler._thread
+    replacement = resource_span()
+
+    def restart():
+        attempted.set()
+        plugin.start(replacement)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        try:
+            assert entered.wait(5)
+            stopping = pool.submit(stop_samplers)
+            assert sampler._stop.wait(5)
+            assert not stopping.done() and old_thread.is_alive()
+            starting = pool.submit(restart)
+            assert attempted.wait(5)
+            assert not starting.done()
+        finally:
+            release.set()
+        stopping.result(5)
+        starting.result(5)
+    assert not old_thread.is_alive()
+    assert sampler._thread is None and sampler._active == {}
+    assert not sampler.samples
+    assert plugin.end(span) == {}
+    assert plugin._sampler is GpuStats(interval=0.001)._sampler
+    assert plugin._sampler is not sampler
+    assert plugin.end(replacement)["gpu_percent"] == 50.0
+
+
+def test_stopping_a_sampler_invalidates_active_windows(fake_nvml, resource_span):
+    plugin = GpuStats(interval=3600)
+    spans = [resource_span() for _ in range(3)]
+    for span in spans:
+        plugin.start(span)
+    plugin._sampler._record(2, 100, 900 * MB)
+    old_thread = plugin._sampler._thread
+    plugin._sampler.stop()
+    assert not old_thread.is_alive()
+    assert plugin._sampler._active == {}
+    assert all(plugin.end(span) == {} for span in spans)
+    assert fake_nvml.reads == 0
+    plugin.start(spans[0])
+    assert plugin.end(spans[0]) == {"gpu_percent": 50.0, "gpu_mem_used_mb": 2.0}
+
+
+@pytest.mark.parametrize("kind", ["cpu", "torch", "gpu"])
+def test_resource_plugins_keep_only_active_identity_state(
+    fake_torch, fake_nvml, resource_span, kind
+):
+    plugin = {
+        "cpu": CpuTime,
+        "torch": TorchMemory,
+        "gpu": lambda: GpuStats(interval=3600),
+    }[kind]()
+    spans = [resource_span() for _ in range(100)]
+    for span in spans:
+        plugin.start(span)
+    active = plugin._sampler._active if kind == "gpu" else plugin._active
+    assert len(active) == 100
+    for index, span in enumerate(spans):
+        assert plugin.end(span)
+        assert len(active) == 99 - index
+    assert pl._TORCH_WINDOWS == {}
+
+
+@pytest.mark.parametrize("kind", ["cpu", "torch", "gpu"])
+def test_resource_plugins_duplicate_start_does_not_replace_measurement(
+    fake_torch, fake_nvml, resource_span, kind
+):
+    plugin = {
+        "cpu": CpuTime,
+        "torch": TorchMemory,
+        "gpu": lambda: GpuStats(interval=3600),
+    }[kind]()
+    span = resource_span()
+    plugin.start(span)
+    active = plugin._sampler._active if kind == "gpu" else plugin._active
+    opening = next(iter(active.values()))
+    plugin.start(span)
+    assert len(active) == 1 and next(iter(active.values())) is opening
+    assert plugin.end(span)
+    assert plugin.end(span) == {} and active == {}
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("kind", ["cpu", "torch", "gpu"])
+def test_resource_plugin_hook_overhead(fake_torch, fake_nvml, resource_span, kind):
+    if sys.gettrace() is not None:
+        pytest.skip("timing is meaningless under tracing")
+    plugin = {
+        "cpu": CpuTime,
+        "torch": TorchMemory,
+        "gpu": lambda: GpuStats(interval=3600),
+    }[kind]()
+    span = resource_span()
+
+    def measure():
+        plugin.start(span)
+        plugin.end(span)
+
+    measure()
+    times = sorted(timeit.repeat(measure, number=2000, repeat=5))
+    per_span = times[len(times) // 2] / 2000
+    print(f"\n{kind} resource hooks: {per_span * 1e6:.2f}us/span (fake GPU)")
+    assert per_span < 100e-6
 
 
 # --------------------------------------------------------------------------- #

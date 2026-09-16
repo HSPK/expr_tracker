@@ -22,7 +22,6 @@ SRC = str(Path("src").resolve())
 
 def store_for(tmp_path, name="r", **options):
     store = HistoryStore()
-    options.setdefault("max_open_seconds", None)
     store.init(project="sc", name=name, dir=str(tmp_path), **options)
     return store
 
@@ -150,7 +149,6 @@ def test_alerts_keep_firing_while_the_cache_evicts(tmp_path):
         name="evict-alerts",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         cache_bytes=1,  # every row is evicted immediately
         alert_window=50,
         alert=alert_config(received),
@@ -192,7 +190,6 @@ def test_alerts_fire_on_patched_steps(tmp_path):
         dir=str(tmp_path),
         backends=[],
         step_policy="allow",
-        max_open_seconds=None,
         alert=alert_config(received),
         alert_rules=[
             {
@@ -273,7 +270,6 @@ def test_a_resumed_run_keeps_alerting(tmp_path):
         name="resume-alerts",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert=alert_config(received),
         alert_rules=["loss > 10 => error: high"],
     )
@@ -287,7 +283,6 @@ def test_a_resumed_run_keeps_alerting(tmp_path):
         name="resume-alerts",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert=alert_config(received),
         alert_rules=["diff(loss[2]) > 5 => error: jump"],
     )

@@ -252,7 +252,6 @@ def test_a_built_rule_is_accepted_wherever_a_string_is(tmp_path):
         name="built",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         alert={
             "channels": [
                 {

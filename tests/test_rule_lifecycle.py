@@ -21,7 +21,6 @@ def run(tmp_path):
             name=options.pop("name", "r"),
             dir=str(tmp_path),
             backends=[],
-            max_open_seconds=None,
             alert={
                 "channels": [
                     {
@@ -309,7 +308,6 @@ def test_max_pending_records_bounds_the_write_buffer(tmp_path, monkeypatch):
         project="sm",
         name="pending",
         dir=str(tmp_path),
-        max_open_seconds=None,
         buffer_size=1,
         max_pending_records=5,
     )

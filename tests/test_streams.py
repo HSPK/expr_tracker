@@ -33,7 +33,6 @@ def store(tmp_path):
 
     def factory(stream=None, name="r", **options):
         instance = HistoryStore()
-        options.setdefault("max_open_seconds", None)
         instance.init(
             project="s", name=name, dir=str(tmp_path), stream=stream, **options
         )
@@ -186,7 +185,6 @@ def test_sidecars_do_not_clobber_each_other(tmp_path):
         name="r",
         dir=str(tmp_path),
         backends=[],
-        max_open_seconds=None,
         config={"lr": 0.1},
     )
     train.summary["best"] = 1
@@ -199,7 +197,6 @@ def test_sidecars_do_not_clobber_each_other(tmp_path):
         dir=str(tmp_path),
         backends=[],
         stream="data",
-        max_open_seconds=None,
         config={"workers": 8},
     )
     data.summary["rows"] = 999
@@ -233,7 +230,7 @@ def test_the_default_file_wins_over_a_stream(store, tmp_path):
 def test_resolution_finds_a_rank_shard_when_rank_zero_is_absent(tmp_path, monkeypatch):
     monkeypatch.setenv("RANK", "2")
     instance = HistoryStore()
-    instance.init(project="s", name="r", dir=str(tmp_path), max_open_seconds=None)
+    instance.init(project="s", name="r", dir=str(tmp_path))
     instance.log({"loss": 1.0})
     instance.finish()
     assert resolve_run_path(run_dir(tmp_path)).name == "metrics.rank2.jsonl"
@@ -274,7 +271,6 @@ def active(tmp_path):
     created = []
 
     def factory(stream=None, **options):
-        options.setdefault("max_open_seconds", None)
         created.append(
             et.init(
                 project="s",
@@ -361,7 +357,6 @@ def test_alerts_are_independent_per_stream(tmp_path):
         dir=str(tmp_path),
         backends=[],
         stream="data",
-        max_open_seconds=None,
         alert=channel,
         alert_rules=["produce_ms > 100 => warning: data pipeline slow"],
     )
@@ -399,7 +394,6 @@ def test_a_stream_becomes_a_grouped_backend_run(tmp_path):
         dir=str(tmp_path),
         backends=[backend],
         stream="data",
-        max_open_seconds=None,
     )
     try:
         kwargs = backend.calls[0]
@@ -418,7 +412,6 @@ def test_the_default_stream_is_not_grouped(tmp_path):
         name="r",
         dir=str(tmp_path),
         backends=[backend],
-        max_open_seconds=None,
     )
     try:
         assert run.backend_run_name == "r"
@@ -438,7 +431,6 @@ def test_trackio_streams_are_grouped(tmp_path, monkeypatch):
         dir=str(tmp_path),
         backends=["trackio"],
         stream="data",
-        max_open_seconds=None,
     )
     try:
         kwargs = module.calls[0]
@@ -455,7 +447,6 @@ def test_backend_kwargs_still_win(tmp_path):
         dir=str(tmp_path),
         backends=[backend],
         stream="data",
-        max_open_seconds=None,
         backend_kwargs={"recorder": {"group": "mine"}},
     )
     try:
