@@ -123,6 +123,22 @@ plain functions over a sequence, so they hold no lock and are tested directly.
 `et.history(run=...)` bypasses the store entirely and reads through `JsonlReader`
 (`read_history`), which is what makes offline analysis and `et rules test` possible.
 
+### Rotation segments
+
+Metric and span writers default to `max_file_bytes=100 << 20`; `None` disables
+rotation. The original file is never renamed. Additional, permanently retained
+segments live in `<filename>.parts/00000001.jsonl`, incrementing numerically.
+Writes split batches only at record boundaries, and oversized records stay intact.
+On failure, rollback truncates the logical byte stream to its pre-batch size and
+removes newly written suffix segments before retrying.
+
+The sparse index and metadata use cumulative byte offsets and row counts across
+all segments. Readers capture the segment list and each file's byte boundary per
+query, then scan or reverse-tail them as one logical file. This preserves cache
+boundaries, cross-segment patch merging, and snapshots while new segments appear.
+Resume repairs the active segment's torn tail and restores the whole run's state.
+Span trace export uses the same segmented raw reader.
+
 ### Rows versus steps
 
 A step normally occupies one physical row, but an explicit commit followed by

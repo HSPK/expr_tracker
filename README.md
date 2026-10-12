@@ -26,7 +26,8 @@ et.history(-1, output_type="pd")  # everything, as a DataFrame
 ## Why
 
 - **The file is the source of truth.** One JSON object per step, appended to
-  `metrics.jsonl`. No server, no database, no vendor.
+  `metrics.jsonl`, automatically split into retained segments at 100 MiB.
+  History queries read all segments transparently. No server, no database, no vendor.
 - **History is queryable during the run.** `et.history(n)` answers from an in-memory
   cache and touches the file only for what it evicted — 227&nbsp;µs for
   `history(50)` whether the run has 1,000 steps or 100,000.

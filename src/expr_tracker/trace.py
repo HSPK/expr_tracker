@@ -18,6 +18,7 @@ from tempfile import NamedTemporaryFile, TemporaryDirectory
 from typing import Any
 
 from .history.naming import parse_stream, spans_filename
+from .history.reader import JsonlReader
 
 MICROSECONDS = 1_000_000.0
 
@@ -90,7 +91,7 @@ def _iter_spans(
     if not path.is_file():
         return
     # Binary lines isolate invalid UTF-8 to one record, like malformed JSON.
-    with path.open("rb") as source:
+    with closing(JsonlReader(path).iter_raw()) as source:
         for line in source:
             try:
                 record = json.loads(line)

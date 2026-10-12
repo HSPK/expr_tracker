@@ -16,12 +16,13 @@ from loguru import logger
 
 from .frame import project, to_output
 from .naming import RANK_PATTERN, metrics_filename
+from .rotation import segments
 
 CHUNK_SIZE = 256 * 1024
 
 
 class JsonlReader:
-    """Read-only access to one ``metrics.jsonl``.
+    """Read-only access to a JSONL file and all its rotation segments.
 
     ``index`` is a sparse list of ``(step, line, offset)`` anchors, loaded from the
     meta sidecar or rebuilt by scanning. With ``merge=True`` results are merged by
@@ -51,6 +52,7 @@ class JsonlReader:
         self._snapshot_limit: int | None = None
         self._snapshot_file_size: int | None = None
         self._cached_snapshot: tuple[int, JsonlReader] | None = None
+        self._segments: list[tuple[Path, int]] | None = None
 
     def _snapshot(self, end: int | None = None) -> JsonlReader:
         """A query-local reader whose metadata and data share one byte boundary."""
@@ -58,13 +60,25 @@ class JsonlReader:
             end is None or end >= self._snapshot_limit
         ):
             return self
-        size = self.size
+        captured = self._segments
+        if captured is None:
+            captured = [
+                (path, path.stat().st_size)
+                for path in segments(self.path)
+                if path.exists()
+            ]
+        size = (
+            self.size
+            if self._snapshot_limit is not None
+            else sum(length for _, length in captured)
+        )
         limit = size if end is None else max(0, min(end, size))
         source = self
         cached = self._cached_snapshot
         if cached is not None and cached[0] >= limit:
             source = cached[1]
         reader = JsonlReader(self.path)
+        reader._segments = captured
         reader._snapshot_limit = limit
         reader._snapshot_file_size = (
             size if self._snapshot_file_size is None else self._snapshot_file_size
@@ -83,7 +97,7 @@ class JsonlReader:
     def size(self) -> int:
         if self._snapshot_limit is not None:
             return self._snapshot_limit
-        return self.path.stat().st_size if self.path.exists() else 0
+        return sum(path.stat().st_size for path in segments(self.path) if path.exists())
 
     @property
     def merge(self) -> bool:
@@ -170,6 +184,23 @@ class JsonlReader:
 
     def _scan(self, start: int = 0, end: int | None = None):
         """Yield ``(byte offset, raw line)`` for every line, blanks included."""
+        if self._segments is not None:
+            limit = self.size if end is None else min(end, self.size)
+            base = 0
+            for path, length in self._segments:
+                if base >= limit:
+                    break
+                if base + length > start:
+                    reader = JsonlReader(path)
+                    reader._snapshot_limit = min(length, limit - base)
+                    reader._snapshot_file_size = length
+                    for offset, raw in reader._scan_file(max(0, start - base)):
+                        yield base + offset, raw
+                base += length
+            return
+        yield from self._scan_file(start, end)
+
+    def _scan_file(self, start: int = 0, end: int | None = None):
         if not self.path.exists():
             return
         limit = self.size if end is None else end
@@ -207,6 +238,17 @@ class JsonlReader:
 
     def _reverse_raw(self, end: int | None = None) -> Iterator[bytes]:
         """Yield nonblank lines backwards, joining long lines only once."""
+        if self._segments is not None:
+            limit = self.size if end is None else min(end, self.size)
+            base = sum(length for _, length in self._segments)
+            for path, length in reversed(self._segments):
+                base -= length
+                if base < limit:
+                    reader = JsonlReader(path)
+                    reader._snapshot_limit = min(length, limit - base)
+                    reader._snapshot_file_size = length
+                    yield from reader._reverse_raw()
+            return
         if not self.path.exists():
             return
         size = self.size

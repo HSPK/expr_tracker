@@ -18,6 +18,12 @@ from loguru import logger
 
 from .._process import check_process, process_id, register_fork_reset
 from .reader import JsonlReader
+from .rotation import (
+    DEFAULT_MAX_FILE_BYTES,
+    segment_path,
+    segments,
+    validate_file_limit,
+)
 
 DEFAULT_BUFFER_SIZE = 50
 DEFAULT_BUFFER_INTERVAL = 1.0
@@ -140,6 +146,9 @@ class JsonlWriter:
       ``max_pending_bytes``. Both byte limits must be positive integers or ``None``.
     - ``async_write``: enqueue without producer disk I/O; ``flush`` and ``close``
       still wait for accepted writes. The default preserves synchronous flushing.
+    - ``max_file_bytes``: rotate before a record would exceed this file size.
+      All segments are retained; a larger record occupies a segment by itself.
+      ``None`` disables rotation.
     """
 
     def __init__(
@@ -152,13 +161,19 @@ class JsonlWriter:
         max_pending_records: int = DEFAULT_MAX_PENDING_RECORDS,
         max_pending_bytes: int | None = DEFAULT_MAX_PENDING_BYTES,
         max_record_bytes: int | None = DEFAULT_MAX_RECORD_BYTES,
+        max_file_bytes: int | None = DEFAULT_MAX_FILE_BYTES,
         index_every: int = DEFAULT_INDEX_EVERY,
         meta_extra: dict | None = None,
         async_write: bool = False,
     ):
         self._owner_pid = process_id()
         validate_byte_limits(max_pending_bytes, max_record_bytes)
+        validate_file_limit(max_file_bytes)
         self.path = Path(path)
+        self.max_file_bytes = max_file_bytes
+        active = segments(self.path)[-1]
+        self._active_number = 0 if active == self.path else int(active.stem)
+        self._active_size = 0
         self.meta_path = self.path.with_name(self.path.stem + ".meta.json")
         self.buffer_size = max(1, int(buffer_size))
         self.buffer_interval = (
@@ -213,12 +228,21 @@ class JsonlWriter:
 
     # ------------------------------------------------------------------ open/resume
 
+    @property
+    def _active_path(self) -> Path:
+        return (
+            self.path
+            if self._active_number == 0
+            else segment_path(self.path, self._active_number)
+        )
+
     def _load(self):
         """Restore state from an existing file, repairing a torn tail and stale meta."""
         if not self.path.exists():
             return
         self._repair_torn_tail()
-        size = self.path.stat().st_size
+        self._active_size = self._active_path.stat().st_size
+        size = JsonlReader(self.path).size
         if not self._restore_from_meta(size):
             self._rebuild_from_disk(size)
         self.size = size
@@ -228,10 +252,10 @@ class JsonlWriter:
 
     def _repair_torn_tail(self):
         """Drop a partially written final line so appends cannot glue onto it."""
-        size = self.path.stat().st_size
+        size = self._active_path.stat().st_size
         if size == 0:
             return
-        with open(self.path, "rb") as f:
+        with open(self._active_path, "rb") as f:
             f.seek(size - 1)
             if f.read(1) == b"\n":
                 return
@@ -245,7 +269,7 @@ class JsonlWriter:
                     cut = pos + index + 1
                     break
         try:
-            os.truncate(self.path, cut)
+            os.truncate(self._active_path, cut)
         except Exception as e:
             self._diagnostics.add(
                 "error", f"Could not truncate torn tail of {self.path}: {e}"
@@ -253,7 +277,7 @@ class JsonlWriter:
             return
         self._diagnostics.add(
             "warning",
-            f"Dropped {size - cut} bytes of a torn final line in {self.path}."
+            f"Dropped {size - cut} bytes of a torn final line in {self.path}.",
         )
 
     def _restore_from_meta(self, size: int) -> bool:
@@ -293,12 +317,9 @@ class JsonlWriter:
     def _rescan(self, offset: int, line_no: int):
         """Fold every line from ``offset`` onwards back into the counters and index."""
         self.lines = self._next_index_line = line_no
-        with open(self.path, "rb") as f:
-            f.seek(offset)
-            for raw in f:
-                if raw.strip():
-                    self._track_line(_peek_step(raw), offset)
-                offset += len(raw)
+        for position, raw in JsonlReader(self.path)._snapshot()._scan(offset):
+            if raw.strip():
+                self._track_line(_peek_step(raw), position)
 
     def _track_line(self, step: int | None, offset: int):
         """Account for one line that is already on disk."""
@@ -449,7 +470,8 @@ class JsonlWriter:
                 if self._first_buffered_time is None:
                     self._first_buffered_time = now
                 interval = (
-                    None if self._last_append_time is None
+                    None
+                    if self._last_append_time is None
                     else now - self._last_append_time
                 )
                 self._last_append_time = now
@@ -592,13 +614,42 @@ class JsonlWriter:
             self._save_meta()
 
     def _write(self, payload: bytes):
+        """Split a batch at record boundaries, without renaming pinned segments."""
+        if (
+            self.max_file_bytes is None
+            or self._active_size + len(payload) <= self.max_file_bytes
+        ):
+            self._append(payload)
+            self._active_size += len(payload)
+            return
+        start = 0
+        while start < len(payload):
+            end = start
+            while end < len(payload):
+                next_end = payload.find(b"\n", end) + 1
+                if next_end == 0:
+                    next_end = len(payload)
+                if self._active_size + next_end - start > self.max_file_bytes and (
+                    self._active_size or end > start
+                ):
+                    break
+                end = next_end
+            if end == start:
+                self._active_number += 1
+                self._active_size = 0
+                continue
+            self._append(payload[start:end])
+            self._active_size += end - start
+            start = end
+
+    def _append(self, payload: bytes):
         """Append, recreating the parent directory once if it disappeared."""
         try:
-            with open(self.path, "ab") as f:
+            with open(self._active_path, "ab") as f:
                 f.write(payload)
         except FileNotFoundError:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "ab") as f:
+            self._active_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._active_path, "ab") as f:
                 f.write(payload)
 
     def _track_flushed(self, records: deque[tuple[int, int, bytes]], offset: int):
@@ -625,9 +676,23 @@ class JsonlWriter:
     def _truncate_partial_write(self, size_before: int) -> bool:
         """Roll back a partial write so retries cannot duplicate lines."""
         try:
-            if not self.path.is_file() or self.path.stat().st_size <= size_before:
-                return True  # nothing reached the file
-            os.truncate(self.path, size_before)
+            remaining = size_before
+            for path in segments(self.path):
+                if not path.exists():
+                    continue
+                length = path.stat().st_size
+                if remaining >= length:
+                    remaining -= length
+                elif remaining or path == self.path:
+                    os.truncate(path, remaining)
+                    remaining = 0
+                else:
+                    path.unlink()
+            active = segments(self.path)[-1]
+            self._active_number = 0 if active == self.path else int(active.stem)
+            self._active_size = (
+                self._active_path.stat().st_size if self._active_path.exists() else 0
+            )
             return True
         except Exception as e:
             self._diagnostics.add(
@@ -645,13 +710,12 @@ class JsonlWriter:
             self._first_buffered_time = time.monotonic()
 
     def _has_capacity(self, incoming_bytes: int) -> bool:
-        return (
-            len(self._buffer) + self._inflight_records < self.max_pending_records
-            and (
-                self.max_pending_bytes is None
-                or self._queued_bytes + self._inflight_bytes + incoming_bytes
-                <= self.max_pending_bytes
-            )
+        return len(
+            self._buffer
+        ) + self._inflight_records < self.max_pending_records and (
+            self.max_pending_bytes is None
+            or self._queued_bytes + self._inflight_bytes + incoming_bytes
+            <= self.max_pending_bytes
         )
 
     def _cap_buffer(self, incoming_bytes: int) -> tuple[bool, str]:
@@ -751,7 +815,7 @@ class JsonlWriter:
                                     "error",
                                     f"Closing {self.path} with {len(self._buffer)} "
                                     "unwritten records after a failed final flush "
-                                    f"({self._queued_bytes} bytes)."
+                                    f"({self._queued_bytes} bytes).",
                                 )
                     finally:
                         with self._condition:

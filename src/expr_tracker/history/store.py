@@ -38,6 +38,7 @@ from .naming import (
     validate_stream,
 )
 from .reader import JsonlReader, merge_steps, recent_steps
+from .rotation import DEFAULT_MAX_FILE_BYTES, validate_file_limit
 from .series import DEFAULT_WINDOW, MetricSeries
 from .writer import (
     DEFAULT_BUFFER_INTERVAL,
@@ -115,6 +116,7 @@ class HistoryOptions:
     max_pending_records: int = DEFAULT_MAX_PENDING_RECORDS
     max_pending_bytes: int | None = DEFAULT_MAX_PENDING_BYTES
     max_record_bytes: int | None = DEFAULT_MAX_RECORD_BYTES
+    max_file_bytes: int | None = DEFAULT_MAX_FILE_BYTES
     # in-memory cache
     cache_bytes: int = DEFAULT_CACHE_BYTES
     cache_rows: int = DEFAULT_CACHE_ROWS
@@ -138,6 +140,7 @@ class HistoryOptions:
 
     def __post_init__(self):
         validate_byte_limits(self.max_pending_bytes, self.max_record_bytes)
+        validate_file_limit(self.max_file_bytes)
         if self.step_policy not in STEP_POLICIES:
             raise ValueError(
                 f"Unknown step_policy {self.step_policy!r}; "
@@ -304,6 +307,7 @@ class HistoryStore:
                 max_pending_records=opts.max_pending_records,
                 max_pending_bytes=opts.max_pending_bytes,
                 max_record_bytes=opts.max_record_bytes,
+                max_file_bytes=opts.max_file_bytes,
                 async_write=opts.span_async_write,
             )
             if self.spans_fp is not None
@@ -336,6 +340,7 @@ class HistoryStore:
             max_pending_records=options.max_pending_records,
             max_pending_bytes=options.max_pending_bytes,
             max_record_bytes=options.max_record_bytes,
+            max_file_bytes=options.max_file_bytes,
             meta_extra={
                 "project": self.project,
                 "name": self.name,
@@ -1095,9 +1100,12 @@ class HistoryStore:
         records = view.records()
         if view.complete:
             return records
-        return self._older(
-            lambda: self._older_tail(view, steps, records + opened, merge=merge)
-        ) + records
+        return (
+            self._older(
+                lambda: self._older_tail(view, steps, records + opened, merge=merge)
+            )
+            + records
+        )
 
     def _older(self, fetch: Callable[[], list[dict]]) -> list[dict]:
         """Rows from before the cache; an unreadable file degrades to cache-only.

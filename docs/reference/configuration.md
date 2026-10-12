@@ -27,6 +27,7 @@ list of valid options rather than being silently ignored.
 | `max_pending_records` | 100,000 | cap on queued plus in-flight records |
 | `max_pending_bytes` | 64 MiB | cap on queued plus in-flight encoded bytes; `None` disables |
 | `max_record_bytes` | 8 MiB | maximum encoded size of one record; `None` disables |
+| `max_file_bytes` | 100 MiB | rotate metric and span files at record boundaries; `None` disables |
 
 ```python
 et.init(project="p", cache_bytes=256 << 20, step_policy="allow")
@@ -67,6 +68,22 @@ synchronous writes when a batch is due. Explicit `history.flush()` and `finish()
 wait for accepted records to be flushed in either mode.
 `et.info()["history"]` reports metric/span `pending_bytes`, `span_pending_bytes`,
 `dropped_records` and `dropped_spans` for diagnosing overload and failed writes.
+
+### Automatic rotation
+
+Metrics and spans rotate by default before the next record would make a file
+exceed 100 MiB. Change the threshold with `et.init(max_file_bytes=20 << 20)`, or
+disable rotation with `et.init(max_file_bytes=None)`. The limit must be a positive
+integer or `None`. A record larger than the threshold stays intact in its own file
+(subject to the independent `max_record_bytes` limit).
+
+The original filename remains in place. Subsequent segments live in its `.parts`
+directory, for example `metrics.jsonl.parts/00000001.jsonl`. Stream and rank files
+rotate independently. All segments are retained: rotation limits individual file
+size, not total disk usage. Keep the `.parts` directory alongside the original file
+when copying a run. Live and offline history queries, resume, and span trace export
+read the complete logical history across segments, even when rotation is later
+disabled. Segment files are implementation details, not separate streams.
 
 ## Alert configuration
 
