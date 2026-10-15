@@ -5,7 +5,6 @@ from __future__ import annotations
 import atexit
 import contextlib
 import inspect
-import json
 import os
 import threading
 import time
@@ -14,9 +13,11 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from ._native import NativeSummary, artifact_append_lineage, history_metric_values
 from ._process import check_process, process_id, register_fork_reset
 from .artifacts import Artifact, ArtifactStore, coerce_artifact
 from .history import HistoryStore, current_rank
+from .history.codec import encode_line
 from .history.naming import resolve_artifact_root, sidecar_filename
 from .summary import Summary
 
@@ -137,6 +138,10 @@ class Run:
         self.rank = current_rank()
         self.backends: dict[str, Any] = {}
         self.alerts = None
+        if self._on_commit.__func__ is self._native_commit.__func__:
+            self.history._set_inline_publication(
+                self.history.on_commit, self._inline_summary
+            )
         # Every rank would otherwise open the same remote run and interleave its
         # steps into it, which is what the local rankN shards exist to prevent
         remote = backend_on_rank is None or self.rank == backend_on_rank
@@ -263,12 +268,35 @@ class Run:
 
     # ------------------------------------------------------------------ logging
 
+    def _inline_summary(self) -> NativeSummary | None:
+        if self.backends:
+            return None
+        alerts = self.alerts
+        if alerts is not None and not (
+            type(getattr(alerts, "rules", None)) is dict
+            and not alerts.rules
+            and "on_step" not in alerts.__dict__
+            and getattr(type(alerts), "_native_step", None) is not None
+            and type(alerts).on_step is type(alerts)._native_step
+        ):
+            return None
+        summary = self.summary
+        if (
+            type(summary) is not Summary
+            or "observe" in summary.__dict__
+            or Summary.observe is not Summary._native_observe
+        ):
+            return None
+        return summary._native
+
     def _on_commit(self, record: dict):
-        metrics = {
-            key: value
-            for key, value in record.items()
-            if isinstance(key, str) and not key.startswith("_")
-        }
+        metrics = history_metric_values(record)
+        if metrics is None:
+            metrics = {
+                key: value
+                for key, value in record.items()
+                if isinstance(key, str) and not key.startswith("_")
+            }
         step = record["_step"]
         try:
             self.summary.observe(metrics)
@@ -282,6 +310,8 @@ class Run:
                 logger.warning(f"Failed to log metrics to {name}: {e}")
         if self.alerts is not None:
             self.alerts.on_step(record)
+
+    _native_commit = _on_commit
 
     def log(self, data: dict, step: int | None = None, commit: bool | None = None):
         """Log metrics, mirroring ``wandb.log(data, step=..., commit=...)``.
@@ -395,13 +425,9 @@ class Run:
             "step": self.step,
         }
         try:
-            with open(
-                self.history.log_dir / "artifacts.jsonl",
-                "a",
-                encoding="utf-8",
-                errors="backslashreplace",
-            ) as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            artifact_append_lineage(
+                self.history.log_dir / "artifacts.jsonl", encode_line(record)
+            )
         except Exception as e:
             logger.warning(f"Failed to record artifact lineage: {e}")
 

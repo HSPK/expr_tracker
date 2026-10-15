@@ -26,6 +26,25 @@ def main():
 
 
 @main.command()
+@click.option(
+    "--root",
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Initial run/project directory; the UI can select other server directories.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True, help="Loopback IP.")
+@click.option("--port", default=9110, type=click.IntRange(1, 65535), show_default=True)
+def serve(root: Path, host: str, port: int):
+    """View local JSONL experiments in a read-only browser workspace."""
+    from . import _native
+
+    try:
+        _native.serve(root, Path(__file__).parent / "_web", host, port)
+    except (OSError, ValueError) as error:
+        raise click.ClickException(str(error)) from error
+
+
+@main.command()
 @click.argument("msg")
 @click.option("--title", default="Alert", help="Title of the alert")
 @click.option("--level", default="info", help="info | warning | error | critical")

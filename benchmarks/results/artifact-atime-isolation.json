@@ -1,0 +1,266 @@
+{
+  "decision": "Resolve exact artifact timestamp integration races with a validated private noatime test tree; retain and strengthen exact precision assertions. No artifact runtime change.",
+  "runtime_changed": false,
+  "native_sha256_unchanged": "f057280aabedc5bcb77718eba7f9631e30521d49e31b91f98179101f81c0edcb",
+  "artifact_source_sha256_unchanged": "dfbb1ccc2b996eb32f279f16909ac33c8153ff21105ab960b50d8f15fd1d9b1c",
+  "method": {
+    "first": "Probe actual read behavior using old explicit nanosecond access time on a new nested test file.",
+    "linux": "If reads update atime, preserve inode flags while adding FS_NOATIME_FL only to the private pytest root and existing children; verify new descendants inherit read-stable times.",
+    "privileged_mounts_or_new_dependencies": false,
+    "fallback": "A filesystem already honoring noatime requires no flags. If local flags are unsupported/forbidden or children do not inherit, fail explicitly and request --basetemp on a genuine noatime filesystem.",
+    "scope": "Private test directories/files only; no system-wide mount, production experiment directory or unrelated inode modified.",
+    "atime_contract": "Explicit timestamp setting remains effective; permission and exact modification/access nanoseconds are checked. Access time additionally equals the original seeded nanoseconds."
+  },
+  "regression_coverage": {
+    "original_copy_publication_and_download_check": "Retained, with shared exact assertions and validated read isolation; no retry, tolerance, future timestamp or new skip.",
+    "added_tests": 8,
+    "fault_oracles": "Corrupt native-copied output atime (omitted/zero or truncated to whole seconds) after publication and download; the same strict assertion must reject all four combinations.",
+    "external_reads": "Concurrent source/published reads while ten real downloads are checked; explicit read of each downloaded output before its exact comparison.",
+    "isolation_failures": "Forbidden flags and ineffective child inheritance raise setup errors; scope guard verifies no unrelated file is changed."
+  },
+  "validation": {
+    "focused_artifact_metadata_and_size_guard_passed": 47,
+    "full_sdk_runs": [
+      {
+        "passed": 3214,
+        "failed": 0,
+        "skipped": 5
+      },
+      {
+        "passed": 3214,
+        "failed": 0,
+        "skipped": 5
+      }
+    ],
+    "independent_extracted_wheel_passed": 89,
+    "rust_passed": 31,
+    "python_lint_and_format": "Existing Ruff checks pass for all changed tests.",
+    "initial_wheel_harness_issue": "Two multiprocessing-spawn cases failed because stdin has no runnable main path; not a product failure. Corrected to a persistent file-based __main__ guard; all 89 cases pass, including both artifact publisher lock cases."
+  },
+  "traced_stress": {
+    "native_sha256": "f057280aabedc5bcb77718eba7f9631e30521d49e31b91f98179101f81c0edcb",
+    "attempts": 50,
+    "exact_publication_checks": 50,
+    "exact_download_checks": 50,
+    "mismatches": 0,
+    "competing_reads": 679,
+    "diagnostic_observation_delay_seconds": 0.001,
+    "performance_measurement": false,
+    "trials": [
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      },
+      {
+        "publication_exact": true,
+        "download_exact": true
+      }
+    ]
+  },
+  "diagnostic_source_sha256": "6b4af5a5a52ba41529e66cb1caf17cc31f2fb807af9c8a1f4685b61c694ff056",
+  "syscall_trace_sha256": "69ce954c77ea1bb98c32d11044606ffe3d4ba4ce5667c314fa8b9349acacfa5c",
+  "test_source_sha256": {
+    "tests/_artifact_metadata.py": "2b2614c6a719ddcaf753a2fc5c326e7a6bfaf0b215b520d4d60a605599891033",
+    "tests/test_artifact_metadata.py": "7527a071bb8a74264c5347a14e3abab486a5fcf5f296faa95a780d968eab952d",
+    "tests/test_artifacts.py": "1109565f822c49626fae85ed93e2e40fbae661f6c1b10cdcc61700bd6ab3c476"
+  },
+  "limits": [
+    "This resolves test isolation, not the identity of the previously observed external reader.",
+    "Normal production filesystem atime can still change after later reads; no immutable timestamp promise.",
+    "Unsupported environments must provide a real noatime test filesystem rather than silently passing or skipping.",
+    "No performance measurement or speedup claim."
+  ],
+  "commits_pushes_releases": false
+}

@@ -40,6 +40,7 @@ nav:
       - Distributed runs: guide/distributed.md
       - Backends: guide/backends.md
       - CLI: guide/cli.md
+      - Local Web viewer: guide/web-viewer.md
   - Reference:
       - Python API: reference/api.md
       - Configuration: reference/configuration.md
@@ -47,6 +48,8 @@ nav:
   - Internals:
       - Design: design.md
       - Architecture: architecture.md
+      - Native development: native-development.md
+      - Native benchmarks: benchmarks/native-migration.md
 
 markdown_extensions:
   - admonition

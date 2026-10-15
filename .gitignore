@@ -19,3 +19,12 @@ site/
 tracker/
 outputs/
 runs/
+
+# Native builds and generated viewer assets
+target/
+*.so
+*.pyd
+web/node_modules/
+web/test-results/
+web/playwright-report/
+src/expr_tracker/_web/

@@ -5,23 +5,29 @@ Layout under ``<dir>/<project>/artifacts``::
     index.jsonl          one line per logged version (project-wide)
     <name>/v<N>/...      materialised files for that version
 
-Files are hard-linked when possible so checkpoints cost no extra disk space.
+Files are copied by default. Explicit link mode uses hard links when possible,
+falling back to copies. Rust atomically publishes complete versions and indexes
+under an interprocess lock; references are indexed without materialization.
+Atomic publication does not imply fsync durability across a machine crash.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import shutil
-import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from filelock import FileLock
 from loguru import logger
+
+from ._native import (
+    NativeArtifactStore,
+    artifact_copy,
+    artifact_directory_entries,
+    artifact_file_digest,
+    artifact_file_entry,
+    artifact_validate_path,
+)
 
 DEFAULT_TYPE = "dataset"
 LATEST = "latest"
@@ -60,6 +66,7 @@ class Artifact:
     ):
         if not name:
             raise ValueError("Artifact name must not be empty")
+        artifact_validate_path(Path(name))
         self.name = name
         self.type = type or DEFAULT_TYPE
         self.description = description
@@ -79,8 +86,6 @@ class Artifact:
         self, local_path: str | os.PathLike, name: str | None = None
     ) -> Artifact:
         path = Path(local_path)
-        if not path.is_file():
-            raise FileNotFoundError(f"Artifact file does not exist: {path}")
         self._add(path, name or path.name)
         return self
 
@@ -88,26 +93,27 @@ class Artifact:
         self, local_dir: str | os.PathLike, name: str | None = None
     ) -> Artifact:
         root = Path(local_dir)
-        if not root.is_dir():
-            raise NotADirectoryError(f"Artifact directory does not exist: {root}")
-        prefix = f"{name.rstrip('/')}/" if name else ""
-        for file in sorted(p for p in root.rglob("*") if p.is_file()):
-            self._add(file, prefix + file.relative_to(root).as_posix())
+        for logical, size, digest, source in artifact_directory_entries(root, name):
+            self.entries.append(
+                ArtifactEntry(path=logical, size=size, digest=digest, source=source)
+            )
         return self
 
     def add_reference(self, uri: str, name: str | None = None) -> Artifact:
         """Record an external URI without copying anything."""
-        self.entries.append(
-            ArtifactEntry(path=name or uri.rsplit("/", 1)[-1] or uri, ref=uri)
-        )
+        logical = name or uri.rsplit("/", 1)[-1] or uri
+        artifact_validate_path(Path(logical))
+        self.entries.append(ArtifactEntry(path=logical, ref=uri))
         return self
 
     def _add(self, path: Path, logical: str):
+        artifact_validate_path(Path(logical))
+        size, digest = artifact_file_entry(path)
         self.entries.append(
             ArtifactEntry(
                 path=logical,
-                size=path.stat().st_size,
-                digest=file_digest(path),
+                size=size,
+                digest=digest,
                 source=str(path),
             )
         )
@@ -126,20 +132,17 @@ class Artifact:
         if root is None:
             return self.dir
         target = Path(root)
-        target.mkdir(parents=True, exist_ok=True)
-        for entry in self.entries:
-            if entry.ref:
-                continue
-            source = self.dir / entry.path
-            destination = target / entry.path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if source.exists():
-                shutil.copy2(source, destination)
+        artifact_copy(
+            self.dir,
+            target,
+            [Path(entry.path) for entry in self.entries if not entry.ref],
+        )
         return target
 
     def get_path(self, name: str) -> Path:
         if self.dir is None:
             raise RuntimeError(f"Artifact {self.name!r} has not been logged yet")
+        artifact_validate_path(Path(name))
         return self.dir / name
 
     def files(self) -> list[str]:
@@ -194,12 +197,17 @@ class Artifact:
         )
 
 
-@dataclass
 class ArtifactStore:
     """Project-scoped artifact storage shared by every run of that project."""
 
-    root: Path
-    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+    def __init__(self, root: Path):
+        self.root = Path(root)
+        self._native = NativeArtifactStore(self.root)
+
+    @staticmethod
+    def _diagnostics(messages):
+        for message in messages:
+            logger.warning(message)
 
     @property
     def index_path(self) -> Path:
@@ -215,126 +223,41 @@ class ArtifactStore:
         step: int | None = None,
     ) -> Artifact:
         """Store a new version, reusing an existing one with identical contents."""
-        if mode not in ("link", "copy", "reference"):
-            raise ValueError(
-                f"Unknown artifact mode {mode!r}; use link, copy or reference"
-            )
-        artifact.aliases = sorted({*artifact.aliases, *(aliases or [])} - {LATEST})
-        artifact.digest = self._digest(artifact)
-        self.root.mkdir(parents=True, exist_ok=True)
-        with self._lock, FileLock(self.root / ".lock"):
-            # One pass over the index answers both questions: has this exact content
-            # been stored before, and what is the next free version?
-            versions = [a for a in self.entries() if a.name == artifact.name]
-            existing = next(
-                (a for a in reversed(versions) if a.digest == artifact.digest), None
-            )
-            if existing is not None:
-                existing.aliases = sorted({*existing.aliases, *artifact.aliases})
-                self._append(existing, reused=True)
-                return existing
-            known = [a.version for a in versions if a.version is not None]
-            artifact.version = max(known, default=-1) + 1
-            artifact.dir = self.root / artifact.name / f"v{artifact.version}"
-            artifact.created_at = time.time()
-            artifact.run, artifact.step = run, step
-            if mode != "reference":
-                self._materialise(artifact, mode)
-            self._append(artifact)
-        return artifact
+        data = artifact.to_dict()
+        data["aliases"] = [*artifact.aliases, *(aliases or [])]
+        data["entries"] = [
+            {**entry.to_dict(), "source": entry.source} for entry in artifact.entries
+        ]
+        result, diagnostics = self._native.log(
+            data,
+            mode,
+            run,
+            step,
+            getattr(self, "_on_locked", None),
+            getattr(self, "_link_errno", None),
+        )
+        self._diagnostics(diagnostics)
+        artifact.aliases, artifact.digest = data["aliases"], data["digest"]
+        logged = Artifact.from_dict(result, self.root)
+        if not result["reused"]:
+            artifact.__dict__.update(logged.__dict__)
+            return artifact
+        return logged
 
     def resolve(self, spec: str) -> Artifact | None:
         """Look up ``name``, ``name:latest`` or ``name:v3`` in the index."""
-        name, _, selector = spec.partition(":")
-        selector = selector or LATEST
-        matches = [a for a in self.entries() if a.name == name]
-        if not matches:
-            return None
-        if selector == LATEST:
-            return matches[-1]
-        if selector.startswith("v") and selector[1:].isdigit():
-            version = int(selector[1:])
-            return next((a for a in matches if a.version == version), None)
-        return next((a for a in reversed(matches) if selector in a.aliases), None)
+        result, diagnostics = self._native.resolve(spec)
+        self._diagnostics(diagnostics)
+        return Artifact.from_dict(result, self.root) if result is not None else None
 
     def entries(self) -> list[Artifact]:
-        if not self.index_path.exists():
-            return []
-        artifacts: list[Artifact] = []
-        by_version: dict[tuple, Artifact] = {}
-        with open(self.index_path, encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    data = json.loads(line)
-                except Exception as e:
-                    logger.warning(f"Skipping corrupted artifact index line: {e}")
-                    continue
-                key = (data.get("name"), data.get("version"))
-                if data.get("reused"):
-                    # A reuse only records new aliases; fold them into the version
-                    known = by_version.get(key)
-                    if known is not None:
-                        added = data.get("aliases", [])
-                        known.aliases = sorted({*known.aliases, *added})
-                    continue
-                artifact = Artifact.from_dict(data, self.root)
-                by_version[key] = artifact
-                artifacts.append(artifact)
-        return artifacts
-
-    # ------------------------------------------------------------------ internals
-
-    def _digest(self, artifact: Artifact) -> str:
-        hasher = hashlib.sha256()
-        hasher.update(f"{artifact.type}\0".encode("utf-8", errors="surrogatepass"))
-        for entry in sorted(artifact.entries, key=lambda e: e.path):
-            hasher.update(
-                f"{entry.path}\0{entry.digest}\0{entry.ref or ''}\0".encode(
-                    "utf-8", errors="surrogatepass"
-                )
-            )
-        return f"sha256:{hasher.hexdigest()}"
-
-    def _materialise(self, artifact: Artifact, mode: str):
-        assert artifact.dir is not None
-        artifact.dir.mkdir(parents=True, exist_ok=True)
-        for entry in artifact.entries:
-            if entry.ref or not entry.source:
-                continue
-            destination = artifact.dir / entry.path
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if destination.exists():
-                continue
-            source = Path(entry.source)
-            try:
-                if mode == "link":
-                    os.link(source, destination)
-                else:
-                    shutil.copy2(source, destination)
-            except OSError:
-                shutil.copy2(source, destination)
-
-    def _append(self, artifact: Artifact, reused: bool = False):
-        self.root.mkdir(parents=True, exist_ok=True)
-        record = artifact.to_dict()
-        record["reused"] = reused
-        try:
-            with open(
-                self.index_path, "a", encoding="utf-8", errors="backslashreplace"
-            ) as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception as e:
-            logger.error(f"Failed to update artifact index {self.index_path}: {e}")
+        result, diagnostics = self._native.entries()
+        self._diagnostics(diagnostics)
+        return [Artifact.from_dict(data, self.root) for data in result]
 
 
 def file_digest(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(CHUNK):
-            hasher.update(chunk)
-    return f"sha256:{hasher.hexdigest()}"
+    return artifact_file_digest(Path(path))
 
 
 def coerce_artifact(

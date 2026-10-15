@@ -2,6 +2,23 @@
 
 Installed as `et`.
 
+## `et serve`
+
+Start the native development build's read-only local Web viewer:
+
+```bash
+et serve --root tracker/jsonl
+et serve --root runs/llm/sft-1 --port 9111
+```
+
+`--root` is required and may point to one run or a root containing multiple runs.
+It sets the initial directory, not an access sandbox: **Choose directory** in the
+UI can browse and select other server-readable directories. Each page keeps its
+own selected root.
+The default listener is `127.0.0.1:9110`; only loopback IPs are accepted.
+See the [viewer guide](web-viewer.md) for run comparison, live refresh, rotation,
+data representation, and remote access through SSH.
+
 ## `et history`
 
 Print a run's recorded history.

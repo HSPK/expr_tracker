@@ -109,10 +109,10 @@ def test_lagging_callback_uses_latest_accepted_commit_time(
             second.join(5)
             assert not second.is_alive()
         else:
-            with instance.history._notification_condition:
-                assert instance.history._notification_condition.wait_for(
-                    lambda: len(instance.history._notifications) == 1, timeout=5
-                )
+            deadline = time.monotonic() + 5
+            while len(instance.history._notifications) != 1:
+                assert time.monotonic() < deadline
+                time.sleep(0.001)
         assert instance.history.last_commit_time == (1000.0 if rejected else 1061.0)
     finally:
         release.set()

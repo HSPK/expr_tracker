@@ -458,6 +458,7 @@ wheels = [
 
 [[package]]
 name = "expr-tracker"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -528,7 +529,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'all'", specifier = ">=0.21.0" },
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.21.0" },
 ]
-provides-extras = ["all", "gpu", "pandas", "polars", "trackio", "wandb"]
+provides-extras = ["wandb", "trackio", "pandas", "polars", "gpu", "all"]
 
 [package.metadata.requires-dev]
 dev = [

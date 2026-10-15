@@ -294,7 +294,7 @@ def test_dedup_state_is_bounded():
     deduper = Deduper(0.001)
     for i in range(MAX_DEDUP_KEYS + 500):
         deduper.check(f"k{i}", now=i)
-    assert len(deduper._seen) <= MAX_DEDUP_KEYS + 1
+    assert len(deduper) <= MAX_DEDUP_KEYS + 1
 
 
 # ---------------------------------------------------------------- own review pass

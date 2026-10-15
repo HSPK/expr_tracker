@@ -114,7 +114,7 @@ def test_child_does_not_acquire_inherited_locked_state(tmp_path):
             run_module._lock, tracker._lifecycle, alerts._lock,
             plugins._SAMPLERS_LOCK, plugins._TORCH_LOCK,
             parent.history._write_lock, parent.history._lock,
-            parent._finish_lock, parent.summary._lock, cpu._lock,
+            parent._finish_lock, cpu._lock,
         ]
         ready, release = threading.Event(), threading.Event()
         def hold():

@@ -9,6 +9,27 @@ import threading
 import pytest
 
 import expr_tracker as et
+from expr_tracker.history import store as store_module
+
+
+def test_closed_native_row_is_not_serialized_twice(store, monkeypatch):
+    history = store()
+    serialized = []
+    original = store_module.encode_line
+
+    def encode(record):
+        serialized.append(record)
+        return original(record)
+
+    monkeypatch.setattr(store_module, "encode_line", encode)
+    metrics = {"surrogate": "\ud800", "huge": 10**200, "payload": "x" * (512 << 10)}
+    assert history.log(metrics) == 0
+    history.flush()
+    assert len(serialized) == 1
+    cached = history.get(-1)[0]
+    durable = json.loads(history.log_fp.read_bytes())
+    assert cached == durable
+    assert {key: cached[key] for key in metrics} == metrics
 
 
 def test_oversized_metric_is_not_cached_or_forwarded(run):
@@ -48,8 +69,7 @@ def test_oversized_span_keeps_valid_timing_but_not_its_large_event(run):
         pass
     et.finish()
     spans = [
-        json.loads(line)
-        for line in instance.history.spans_fp.read_text().splitlines()
+        json.loads(line) for line in instance.history.spans_fp.read_text().splitlines()
     ]
     assert [span["name"] for span in spans] == ["small"]
     row = instance.history_query(1)[0]
@@ -74,7 +94,9 @@ def test_bad_byte_limits_do_not_close_an_existing_store(store, tmp_path, name, v
     assert history.get(1)[0]["still_running"] == 1
 
 
-def test_history_reads_remain_available_while_admission_is_backpressured(run, monkeypatch):
+def test_history_reads_remain_available_while_admission_is_backpressured(
+    run, monkeypatch
+):
     instance = run(
         buffer_size=2,
         buffer_interval=None,
@@ -151,13 +173,13 @@ def test_dropped_writer_error_handler_and_reader_do_not_invert_locks(tmp_path):
             history.open_record()
 
         logger.add(sink, level="ERROR")
-        original = history._make_view
+        original = history._collect
 
         def view(*args, **kwargs):
             reached_view.set()
             return original(*args, **kwargs)
 
-        history._make_view = view
+        history._collect = view
 
         def produce():
             history.writer.enqueue(0, 0, json.dumps({"_step": 0, "payload": "x" * 100}).encode())

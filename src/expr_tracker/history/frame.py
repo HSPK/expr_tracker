@@ -7,6 +7,26 @@ from collections.abc import Sequence
 META_KEYS = ("_step", "_time")
 
 
+def project_owned(
+    records: list[dict],
+    *,
+    metrics: Sequence[str] | None = None,
+    include_meta: bool = True,
+    fill_missing: bool = False,
+    dropna: bool = False,
+) -> list[dict]:
+    """Project freshly decoded rows without cloning an unchanged snapshot."""
+    if metrics is None and include_meta and not fill_missing:
+        return records
+    return project(
+        records,
+        metrics=metrics,
+        include_meta=include_meta,
+        fill_missing=fill_missing,
+        dropna=dropna,
+    )
+
+
 def project(
     records: Sequence[dict],
     *,

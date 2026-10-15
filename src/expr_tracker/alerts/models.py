@@ -197,14 +197,9 @@ class ChannelConfig:
         return None
 
     def accepts(self, message: AlertMessage) -> bool:
-        if not self.enabled:
-            return False
-        if self.levels is not None:
-            if message.level not in self.levels:
-                return False
-        elif message.level < self.min_level:
-            return False
-        return not (self.tags and not set(self.tags) & set(message.tags))
+        from .._native import alert_accepts
+
+        return alert_accepts(self, message)
 
 
 DEFAULT_RULE_MESSAGE = "{name} triggered at step {step}: {expr}"

@@ -28,14 +28,28 @@ et.history(-1, output_type="pd")  # everything, as a DataFrame
 - **The file is the source of truth.** One JSON object per step, appended to
   `metrics.jsonl`, automatically split into retained segments at 100 MiB.
   History queries read all segments transparently. No server, no database, no vendor.
+
 - **History is queryable during the run.** `et.history(n)` answers from an in-memory
-  cache and touches the file only for what it evicted — 227&nbsp;µs for
-  `history(50)` whether the run has 1,000 steps or 100,000.
+  cache and reads older records from the local files.
 - **Alerts are expressions, not callbacks.** `zscore(loss[50]) > 3 or isnan(loss)`
   is parsed, validated, and evaluated against a rolling window. Rules can be replayed
   over a finished run to tune thresholds before you trust them.
-- **It stays out of the way.** `log()` costs ~26&nbsp;µs. A failed disk, a dead
+- **It stays out of the way.** A failed disk, a dead
   webhook or an unserialisable value degrades with a warning; none can stop training.
+
+## Local Web workspace
+
+The native development build includes a local, read-only Web workspace:
+
+```bash
+et serve --root ./tracker/jsonl
+```
+
+Open `http://127.0.0.1:9110` to inspect metrics, compare runs, follow new records,
+and view config, summary, and spans across rotation segments.
+Use **Choose directory** to browse or enter a directory path on the server.
+See the [viewer guide](docs/guide/web-viewer.md) and
+[native build instructions](docs/native-development.md).
 
 ## Install
 

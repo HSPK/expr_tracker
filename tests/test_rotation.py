@@ -138,6 +138,56 @@ def test_partial_write_rollback_across_segments(tmp_path, monkeypatch):
     assert JsonlReader(writer.path).read_all() == [{"_step": i} for i in range(5)]
 
 
+def test_native_vectored_rotation_failure_rolls_back_and_retries(tmp_path):
+    path = tmp_path / "metrics.jsonl"
+    raw = line(0)
+    writer = JsonlWriter(
+        path, max_file_bytes=len(raw), max_buffer_seconds=None, buffer_size=1000
+    )
+    records = [{"_step": step} for step in range(4)]
+    write(writer, records[:1])
+    blocked = path.with_name(path.name + ".parts") / "00000002.jsonl"
+    blocked.parent.mkdir(exist_ok=True)
+    blocked.mkdir()
+    try:
+        write(writer, records[1:])
+        assert path.read_bytes() == raw
+        assert not blocked.with_name("00000001.jsonl").exists()
+        assert len(writer.buffer) == 3 and writer.lines == 1
+        assert writer.pending_bytes == sum(len(line(**row)) for row in records[1:])
+        blocked.rmdir()
+        writer.flush()
+        assert writer.reader().read_all() == records
+        assert writer.pending_bytes == writer.dropped == 0
+        assert all(part.stat().st_size == len(raw) for part in segments(path))
+    finally:
+        if blocked.is_dir():
+            blocked.rmdir()
+        writer.close()
+
+
+def test_external_multiline_and_split_payloads_preserve_rotation_boundaries(tmp_path):
+    writer = JsonlWriter(
+        tmp_path / "metrics.jsonl", max_file_bytes=30, max_buffer_seconds=None
+    )
+    rows = [line(step) for step in range(6)]
+    for ordinal, payload in enumerate(
+        [
+            rows[0] + rows[1],
+            rows[2][:4],
+            rows[2][4:] + rows[3],
+            rows[4] + rows[5],
+        ]
+    ):
+        writer.enqueue(ordinal, ordinal, payload)
+    writer.flush()
+    writer.close()
+    assert b"".join(part.read_bytes() for part in segments(writer.path)) == b"".join(
+        rows
+    )
+    assert all(part.stat().st_size <= 30 for part in segments(writer.path))
+
+
 def test_live_offline_and_torn_tail(tmp_path):
     store = HistoryStore().init(
         "p",

@@ -48,6 +48,8 @@ class RecordCodec:
         return encoded
 
     def encode_value(self, key: str, value, kind: str = "metric"):
+        if type(value) in (str, int, float, bool, type(None)):
+            return value
         try:
             return jsonable_encoder(value)
         except Exception as e:

@@ -1,0 +1,63 @@
+{
+  "decision": "Keep original metadata assertion and artifact implementation. Reject future-atime fixture because it still races. Original full SDK suite is not clean; filesystem-access isolation remains blocked.",
+  "runtime_changed": false,
+  "native_sha256": "c93bf375f7028afebe4034014dfa7edc52fec7de7151cad98edf29ad4b7914c4",
+  "artifact_source_sha256": "dfbb1ccc2b996eb32f279f16909ac33c8153ff21105ab960b50d8f15fd1d9b1c",
+  "filesystem": {
+    "type": "ext4",
+    "access_time_policy": "relatime",
+    "private_mount_namespace_probe": "Denied while writing uid_map; no mount performed."
+  },
+  "observations": [
+    "Direct artifact_copy reproduces mismatch without publication or checksum reads.",
+    "Failing trace passes exact source nanoseconds to successful utimensat, followed by a newer target access time.",
+    "Destination directory notifications include additional open/access events absent from copying-process syscall trace. Reader identity is not established.",
+    "Python shutil.copy2 reproduces the same exact-atime comparison failure.",
+    "Future timestamps reduce but do not eliminate observed native races; the fixture change was reverted."
+  ],
+  "diagnostics_not_benchmarks": {
+    "initial_traced_native_copy": {
+      "attempts": 10,
+      "mismatches": 3
+    },
+    "immediate_untraced_control": {
+      "native": {"attempts": 100, "mismatches": 0},
+      "python_copy2": {"attempts": 100, "mismatches": 0}
+    },
+    "traced_directory_watch_with_1ms_observation_interval": {
+      "native_original_atime": {
+        "attempts": 50,
+        "mismatches": 15,
+        "copies_with_target_access_events": 50
+      },
+      "python_copy2_original_atime": {
+        "attempts": 50,
+        "mismatches": 50,
+        "copies_with_target_access_events": 50
+      },
+      "native_future_atime": {
+        "attempts": 50,
+        "mismatches": 1,
+        "copies_with_target_access_events": 48
+      },
+      "python_copy2_future_atime": {
+        "attempts": 50,
+        "mismatches": 0,
+        "copies_with_target_access_events": 50
+      }
+    }
+  },
+  "rejected_fixture_validation": {
+    "targeted_artifact_tests_passed": 38,
+    "full_sdk": {"passed": 3205, "failed": 0, "skipped": 5},
+    "oracle_mutations_detected": ["drop_atime", "truncate_nanoseconds"],
+    "accepted": false
+  },
+  "final_original_assertions_validation": {
+    "passed": 3204,
+    "failed": 1,
+    "skipped": 5,
+    "failure": "tests/test_artifacts.py::test_copy_publication_and_download_preserve_exact_file_metadata (download st_atime_ns)"
+  },
+  "remaining_blocker": "Original exact-atime integration check does not control readers outside the copying process. Private mount namespace isolation is unavailable here. No full-suite pass or runtime fix is claimed."
+}

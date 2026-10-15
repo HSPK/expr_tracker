@@ -4,7 +4,6 @@ The watchdog is what notices a *hung* run -- no log() call ever arrives, so noth
 but the background thread can fire the rule.
 """
 
-import threading
 import time
 
 import pytest
@@ -143,36 +142,24 @@ def test_age_rules_need_a_metric_and_stay_unknown_without_one(watched):
 
 
 def test_no_watchdog_thread_without_time_based_rules(watched):
-    watched(["loss > 1 => warning: high"])
+    run, _ = watched(["loss > 1 => warning: high"])
     time.sleep(0.2)
-    names = [t.name for t in threading.enumerate()]
-    assert not any(n.startswith("et-alert-watchdog") for n in names)
+    assert run.alerts._watchdog is None
 
 
 def test_the_watchdog_starts_when_a_time_rule_is_added_later(watched):
-    _, received = watched(["loss > 1000 => warning: never"])
-    assert not any(
-        t.name.startswith("et-alert-watchdog") for t in threading.enumerate()
-    )
+    run, received = watched(["loss > 1000 => warning: never"])
+    assert run.alerts._watchdog is None
     et.add_alert_rule("no_data(0.2s) => error: hung")
     assert wait_for(lambda: received)
 
 
 def test_finish_stops_the_watchdog(watched):
-    watched(["no_data(5s) => error: hung"])
-    assert wait_for(
-        lambda: any(
-            t.name.startswith("et-alert-watchdog") for t in threading.enumerate()
-        )
-    )
+    run, _ = watched(["no_data(5s) => error: hung"])
+    timer = run.alerts._watchdog
+    assert timer.is_alive()
     et.finish()
-    assert wait_for(
-        lambda: (
-            not any(
-                t.name.startswith("et-alert-watchdog") for t in threading.enumerate()
-            )
-        )
-    )
+    assert wait_for(lambda: not timer.is_alive())
 
 
 def test_the_watchdog_interval_is_configurable(tmp_path):

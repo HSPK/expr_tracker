@@ -5,7 +5,6 @@ and a wrapper around ``open()`` (ground truth), so a broken counter cannot hide 
 broken cache.
 """
 
-import builtins
 import json
 
 import pytest
@@ -16,16 +15,20 @@ from expr_tracker.history import HistoryStore
 @pytest.fixture
 def counting_open(monkeypatch):
     """Count reads of the metrics file, whoever performs them."""
-    counter = {"reads": 0}
-    real_open = builtins.open
+    from expr_tracker._native import history_io_count
 
-    def spy(file, mode="r", *args, **kwargs):
-        if "r" in mode and "metrics" in str(file):
-            counter["reads"] += 1
-        return real_open(file, mode, *args, **kwargs)
+    class Counter:
+        baseline = history_io_count()
 
-    monkeypatch.setattr(builtins, "open", spy)
-    return counter
+        def __getitem__(self, key):
+            assert key == "reads"
+            return history_io_count() - self.baseline
+
+        def __setitem__(self, key, value):
+            assert key == "reads" and value == 0
+            self.baseline = history_io_count()
+
+    return Counter()
 
 
 @pytest.fixture

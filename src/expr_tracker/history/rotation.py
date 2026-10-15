@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from .._native import history_segments
+
 DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024
 
 
@@ -18,12 +20,4 @@ def segment_path(path: Path, number: int) -> Path:
 
 def segments(path: Path) -> list[Path]:
     """The original file stays in place; later segments never rename older data."""
-    parts = path.with_name(path.name + ".parts")
-    numbered = []
-    if parts.exists():
-        numbered.extend(
-            part
-            for part in parts.glob("*.jsonl")
-            if part.stem.isascii() and part.stem.isdecimal()
-        )
-    return [path, *sorted(numbered, key=lambda part: int(part.stem))]
+    return history_segments(path)

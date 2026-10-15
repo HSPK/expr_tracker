@@ -3,9 +3,16 @@
 import inspect
 import json
 import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
+from _artifact_metadata import (
+    assert_exact_metadata,
+)
+from _artifact_metadata import (
+    noatime_artifact_fs as noatime_artifact_fs,
+)
 
 import expr_tracker as et
 from expr_tracker.artifacts import Artifact, ArtifactStore, coerce_artifact, file_digest
@@ -63,15 +70,13 @@ def test_identical_contents_reuse_a_version(run, payload):
 
 def _log_shared_artifact(root, source, ready, entered, release):
     store = ArtifactStore(root)
-    original_entries = store.entries
 
-    def entries():
+    def on_locked():
         entered.set()
         if release is not None and not release.wait(10):
             raise TimeoutError("Artifact publisher was not released")
-        return original_entries()
 
-    store.entries = entries
+    store._on_locked = on_locked
     artifact = Artifact("model").add_file(source, name="weights")
     ready.set()
     store.log(artifact)
@@ -112,7 +117,9 @@ def test_concurrent_artifact_publishers_share_a_lock(tmp_path, identical):
                 process.join(5)
     assert all(process.exitcode == 0 for process in processes)
     artifacts = ArtifactStore(root).entries()
-    assert [artifact.version for artifact in artifacts] == ([0] if identical else [0, 1])
+    assert [artifact.version for artifact in artifacts] == (
+        [0] if identical else [0, 1]
+    )
     for artifact in artifacts:
         assert artifact.entries[0].digest == file_digest(artifact.get_path("weights"))
 
@@ -163,6 +170,36 @@ def test_artifact_lineage_is_recorded(run, payload):
     assert all(entry["name"] == "model" for entry in lines)
 
 
+def test_native_artifact_lineage_preserves_raw_encoded_values(tmp_path):
+    from expr_tracker._native import artifact_append_lineage
+
+    path = tmp_path / "nested" / "artifacts.jsonl"
+    payload = json.dumps({"huge": 10**400, "surrogate": "\ud800", "inf": float("inf")})
+    artifact_append_lineage(path, payload.encode())
+    artifact_append_lineage(path, b'{"action":"use"}\n')
+    assert path.read_bytes() == payload.encode() + b'\n{"action":"use"}\n'
+
+
+def test_native_artifact_lineage_serializes_concurrent_appends(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from expr_tracker._native import artifact_append_lineage
+
+    path = tmp_path / "artifacts.jsonl"
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        list(
+            workers.map(
+                lambda index: artifact_append_lineage(
+                    path, json.dumps({"id": index, "payload": "x" * 10000}).encode()
+                ),
+                range(100),
+            )
+        )
+    rows = [json.loads(line) for line in path.read_bytes().splitlines()]
+    assert sorted(row["id"] for row in rows) == list(range(100))
+    assert all(row["payload"] == "x" * 10000 for row in rows)
+
+
 def test_copy_and_reference_modes(run, payload):
     run(backends=[])
     copied = et.log_artifact(
@@ -175,6 +212,45 @@ def test_copy_and_reference_modes(run, payload):
     assert referenced.dir is not None and not referenced.dir.exists()
     with pytest.raises(ValueError, match="Unknown artifact mode"):
         et.log_artifact(str(payload / "ckpt.pt"), name="bad", mode="teleport")
+
+
+@pytest.mark.skipif(
+    os.name != "posix", reason="POSIX permissions and nanosecond timestamps"
+)
+def test_copy_publication_and_download_preserve_exact_file_metadata(
+    tmp_path, payload, noatime_artifact_fs
+):
+    source = payload / "ckpt.pt"
+    artifact = Artifact("model").add_file(source)
+    os.chmod(source, 0o640)
+    modified_ns = 1_234_567_890_123_456_789
+    os.utime(source, ns=(1_234_567_889_987_654_321, modified_ns))
+    logged = ArtifactStore(tmp_path / "store").log(artifact, mode="copy")
+    published = logged.get_path("ckpt.pt")
+    assert_exact_metadata(
+        source,
+        published,
+        accessed_ns=1_234_567_889_987_654_321,
+        modified_ns=modified_ns,
+    )
+
+    os.utime(published, ns=(1_234_567_888_222_333_444, modified_ns))
+    downloaded = logged.download(tmp_path / "download") / "ckpt.pt"
+    assert_exact_metadata(
+        published,
+        downloaded,
+        accessed_ns=1_234_567_888_222_333_444,
+        modified_ns=modified_ns,
+    )
+
+
+def test_download_into_own_directory_does_not_truncate_artifact(tmp_path, payload):
+    logged = ArtifactStore(tmp_path / "store").log(
+        Artifact("model").add_file(payload / "ckpt.pt"), mode="copy"
+    )
+    with pytest.raises(OSError, match="same file"):
+        logged.download(logged.dir)
+    assert logged.get_path("ckpt.pt").read_bytes() == b"weights-v1"
 
 
 def test_artifact_input_validation(payload):
@@ -203,6 +279,72 @@ def test_store_tolerates_corrupt_index(tmp_path, payload):
     assert [a.name for a in store.entries()] == ["a"]
     assert store.resolve("a").version == 0
     assert store.resolve("missing") is None
+
+
+@pytest.mark.parametrize("path", ["../outside", "/absolute", "a/../../outside"])
+def test_artifact_paths_cannot_escape_store(payload, path):
+    with pytest.raises(ValueError, match="Invalid artifact"):
+        Artifact(path)
+    with pytest.raises(ValueError, match="Invalid artifact"):
+        Artifact("safe").add_file(payload / "ckpt.pt", name=path)
+    with pytest.raises(ValueError, match="Invalid artifact"):
+        Artifact("safe").add_reference("s3://bucket/data", name=path)
+
+
+def test_failed_materialization_publishes_neither_index_nor_version(tmp_path, payload):
+    store = ArtifactStore(tmp_path / "store")
+    artifact = Artifact("model").add_file(payload / "ckpt.pt")
+    (payload / "ckpt.pt").write_bytes(b"changed-after-add-file")
+    with pytest.raises(OSError, match="changed"):
+        store.log(artifact)
+    assert store.entries() == []
+    assert not store.index_path.exists()
+    assert artifact.version is None
+    assert not list((store.root / "model").iterdir())
+
+
+def test_reused_old_version_moves_alias_without_changing_latest(tmp_path, payload):
+    store = ArtifactStore(tmp_path / "store")
+    original = (payload / "ckpt.pt").read_bytes()
+    store.log(Artifact("model").add_file(payload / "ckpt.pt"), aliases=["best"])
+    (payload / "ckpt.pt").write_bytes(b"new-version")
+    store.log(Artifact("model").add_file(payload / "ckpt.pt"), aliases=["best"])
+    (payload / "ckpt.pt").write_bytes(original)
+    store.log(Artifact("model").add_file(payload / "ckpt.pt"), aliases=["best"])
+    assert store.resolve("model:latest").version == 1
+    assert store.resolve("model:best").version == 0
+    assert "best" not in store.resolve("model:v1").aliases
+
+
+def test_reference_unicode_and_arbitrary_metadata_round_trip(tmp_path):
+    store = ArtifactStore(tmp_path / "store")
+    artifact = Artifact(
+        "reference",
+        metadata={"huge": 10**400, "surrogate": "\ud800", "nan": float("nan")},
+        aliases=["\ud800"],
+    ).add_reference("s3://bucket/object", name="\ud800")
+    store.log(artifact)
+    resolved = store.resolve("reference:\ud800")
+    assert resolved.entries[0].path == "\ud800"
+    assert resolved.metadata["huge"] == 10**400
+    assert resolved.metadata["surrogate"] == "\ud800"
+    assert resolved.metadata["nan"] != resolved.metadata["nan"]
+
+
+def test_artifact_publication_reentry_fails_without_deadlocking(tmp_path, payload):
+    store = ArtifactStore(tmp_path / "store")
+    artifact = Artifact("a").add_file(payload / "ckpt.pt")
+    errors = []
+
+    def reenter():
+        with pytest.raises(RuntimeError, match="reenter") as error:
+            store.log(artifact)
+        errors.append(str(error.value))
+
+    store._on_locked = reenter
+    store.log(artifact)
+    assert len(errors) == 1
+    assert store.resolve("a").version == 0
 
 
 # ---------------------------------------------------------------- summary

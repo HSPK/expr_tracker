@@ -272,20 +272,14 @@ def blocked_delivery():
         dispatcher.close(timeout=2.0)
 
 
-def test_flush_waits_for_inflight_delivery(blocked_delivery, monkeypatch):
+def test_flush_waits_for_inflight_delivery(blocked_delivery):
     dispatcher, release, completed = blocked_delivery
-    work = dispatcher.channels["test"].queue
+    work = dispatcher.channels["test"]
     waiting = threading.Event()
     flushed = threading.Event()
-    original_wait = work.all_tasks_done.wait
-
-    def wait(timeout=None):
-        waiting.set()
-        return original_wait(timeout)
-
-    monkeypatch.setattr(work.all_tasks_done, "wait", wait)
 
     def flush():
+        waiting.set()
         dispatcher.flush(timeout=2.0)
         flushed.set()
 
@@ -293,6 +287,7 @@ def test_flush_waits_for_inflight_delivery(blocked_delivery, monkeypatch):
     thread.start()
     try:
         assert waiting.wait(1.0)
+        time.sleep(0.05)
         assert not flushed.is_set()
         assert not completed.is_set()
         release.set()
@@ -312,7 +307,7 @@ def test_flush_timeout_leaves_inflight_delivery_running(blocked_delivery):
     dispatcher.flush(timeout=0.05)
     assert time.monotonic() - started >= 0.05
     assert not completed.is_set()
-    assert dispatcher.channels["test"].queue.unfinished_tasks == 1
+    assert dispatcher.channels["test"].unfinished_tasks == 1
     release.set()
     dispatcher.flush(timeout=2.0)
     assert completed.is_set()
@@ -320,18 +315,32 @@ def test_flush_timeout_leaves_inflight_delivery_running(blocked_delivery):
 
 
 def test_queue_full_drops_oldest():
+    started = threading.Event()
+    release = threading.Event()
+    received = []
+
+    def handler(message):
+        started.set()
+        release.wait(2.0)
+        received.append(message.title)
+
     policy = WebhookPolicy(
         async_send=True, dedup_window=0, rate_limit_per_minute=None, queue_size=2
     )
     dispatcher, _ = make(policy=policy)
     runtime = dispatcher.channels["test"]
-    dispatcher._ensure_worker(runtime)
-    dispatcher._stopping.set()  # stop the worker so the queue backs up
-    time.sleep(0.3)
-    for i in range(10):
-        dispatcher.send(message(title=f"t{i}"))
-    assert runtime.pending <= 2
-    assert runtime.dropped > 0
+    runtime.config.options["handler"] = handler
+    try:
+        dispatcher.send(message(title="first"))
+        assert started.wait(1.0)
+        for i in range(10):
+            dispatcher.send(message(title=f"t{i}"))
+        assert runtime.pending == 2
+        assert runtime.dropped == 8
+    finally:
+        release.set()
+        dispatcher.close()
+    assert received == ["first", "t8", "t9"]
 
 
 def test_backend_validation_errors_are_raised():

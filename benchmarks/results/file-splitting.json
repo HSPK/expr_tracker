@@ -1,0 +1,2202 @@
+{
+  "purpose": "Split every oversized authored source/test/benchmark by responsibility, preserving runtime ownership and APIs. Readability refactor, not an algorithm or speedup claim.",
+  "line_limit": {
+    "max_physical_lines": 800,
+    "includes_comments_and_blanks": true,
+    "excludes": [
+      "generated Web assets",
+      "third-party dependencies"
+    ],
+    "oversized_before": [
+      {
+        "path": "src/expr_tracker/history/store.py",
+        "lines": 1123
+      },
+      {
+        "path": "rust/trace.rs",
+        "lines": 813
+      },
+      {
+        "path": "rust/viewer.rs",
+        "lines": 1302
+      },
+      {
+        "path": "rust/alerts.rs",
+        "lines": 1950
+      },
+      {
+        "path": "rust/history/reader.rs",
+        "lines": 1091
+      },
+      {
+        "path": "rust/history/writer.rs",
+        "lines": 1095
+      },
+      {
+        "path": "rust/history/state.rs",
+        "lines": 1009
+      },
+      {
+        "path": "tests/test_spans.py",
+        "lines": 832
+      },
+      {
+        "path": "tests/test_trace.py",
+        "lines": 888
+      },
+      {
+        "path": "tests/test_reader_edge_cases.py",
+        "lines": 854
+      },
+      {
+        "path": "tests/test_callback_isolation.py",
+        "lines": 872
+      },
+      {
+        "path": "tests/test_span_plugins.py",
+        "lines": 2042
+      },
+      {
+        "path": "benchmarks/compare_native.py",
+        "lines": 828
+      }
+    ],
+    "oversized_after": [],
+    "checked_authored_files": 174,
+    "largest_after": {
+      "path": "tests/test_writer_async.py",
+      "lines": 764
+    },
+    "persistent_guard": "tests/test_source_size.py",
+    "final_counts": [
+      {
+        "path": "benchmarks/compare_native.py",
+        "lines": 272
+      },
+      {
+        "path": "benchmarks/native_workloads.py",
+        "lines": 568
+      },
+      {
+        "path": "benchmarks/profile_logging.py",
+        "lines": 181
+      },
+      {
+        "path": "benchmarks/viewer.py",
+        "lines": 182
+      },
+      {
+        "path": "examples/alert_rules.py",
+        "lines": 115
+      },
+      {
+        "path": "examples/checkpoints.py",
+        "lines": 83
+      },
+      {
+        "path": "examples/early_stopping.py",
+        "lines": 99
+      },
+      {
+        "path": "examples/multiprocess_pipeline.py",
+        "lines": 205
+      },
+      {
+        "path": "examples/profile_step.py",
+        "lines": 92
+      },
+      {
+        "path": "examples/quickstart.py",
+        "lines": 90
+      },
+      {
+        "path": "rust/alerts.rs",
+        "lines": 315
+      },
+      {
+        "path": "rust/alerts/delivery.rs",
+        "lines": 516
+      },
+      {
+        "path": "rust/alerts/evaluation.rs",
+        "lines": 521
+      },
+      {
+        "path": "rust/alerts/rules.rs",
+        "lines": 574
+      },
+      {
+        "path": "rust/alerts/watchdog.rs",
+        "lines": 72
+      },
+      {
+        "path": "rust/alerts_parser.rs",
+        "lines": 568
+      },
+      {
+        "path": "rust/alerts_plan.rs",
+        "lines": 458
+      },
+      {
+        "path": "rust/artifacts.rs",
+        "lines": 755
+      },
+      {
+        "path": "rust/history.rs",
+        "lines": 38
+      },
+      {
+        "path": "rust/history/json.rs",
+        "lines": 525
+      },
+      {
+        "path": "rust/history/notifications.rs",
+        "lines": 151
+      },
+      {
+        "path": "rust/history/reader.rs",
+        "lines": 485
+      },
+      {
+        "path": "rust/history/reader/segments.rs",
+        "lines": 625
+      },
+      {
+        "path": "rust/history/record.rs",
+        "lines": 442
+      },
+      {
+        "path": "rust/history/series.rs",
+        "lines": 443
+      },
+      {
+        "path": "rust/history/state.rs",
+        "lines": 435
+      },
+      {
+        "path": "rust/history/state/operations.rs",
+        "lines": 585
+      },
+      {
+        "path": "rust/history/tests.rs",
+        "lines": 238
+      },
+      {
+        "path": "rust/history/writer.rs",
+        "lines": 643
+      },
+      {
+        "path": "rust/history/writer/persistence.rs",
+        "lines": 376
+      },
+      {
+        "path": "rust/history/writer/tests.rs",
+        "lines": 93
+      },
+      {
+        "path": "rust/lib.rs",
+        "lines": 23
+      },
+      {
+        "path": "rust/spans.rs",
+        "lines": 164
+      },
+      {
+        "path": "rust/summary.rs",
+        "lines": 172
+      },
+      {
+        "path": "rust/trace.rs",
+        "lines": 664
+      },
+      {
+        "path": "rust/trace/lanes.rs",
+        "lines": 159
+      },
+      {
+        "path": "rust/viewer.rs",
+        "lines": 727
+      },
+      {
+        "path": "rust/viewer/index.rs",
+        "lines": 253
+      },
+      {
+        "path": "rust/viewer/tests.rs",
+        "lines": 329
+      },
+      {
+        "path": "rust/viewer_json.rs",
+        "lines": 39
+      },
+      {
+        "path": "src/expr_tracker/__init__.py",
+        "lines": 71
+      },
+      {
+        "path": "src/expr_tracker/_compat.py",
+        "lines": 31
+      },
+      {
+        "path": "src/expr_tracker/_process.py",
+        "lines": 33
+      },
+      {
+        "path": "src/expr_tracker/alerts/__init__.py",
+        "lines": 287
+      },
+      {
+        "path": "src/expr_tracker/alerts/backends/__init__.py",
+        "lines": 277
+      },
+      {
+        "path": "src/expr_tracker/alerts/backends/base.py",
+        "lines": 191
+      },
+      {
+        "path": "src/expr_tracker/alerts/backends/cards.py",
+        "lines": 102
+      },
+      {
+        "path": "src/expr_tracker/alerts/dispatch.py",
+        "lines": 150
+      },
+      {
+        "path": "src/expr_tracker/alerts/engine.py",
+        "lines": 216
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/__init__.py",
+        "lines": 27
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/eval.py",
+        "lines": 61
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/functions.py",
+        "lines": 126
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/lexer.py",
+        "lines": 81
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/nodes.py",
+        "lines": 374
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/parser.py",
+        "lines": 5
+      },
+      {
+        "path": "src/expr_tracker/alerts/expr/rule.py",
+        "lines": 66
+      },
+      {
+        "path": "src/expr_tracker/alerts/models.py",
+        "lines": 360
+      },
+      {
+        "path": "src/expr_tracker/artifacts.py",
+        "lines": 286
+      },
+      {
+        "path": "src/expr_tracker/cli.py",
+        "lines": 314
+      },
+      {
+        "path": "src/expr_tracker/encoders.py",
+        "lines": 401
+      },
+      {
+        "path": "src/expr_tracker/history/__init__.py",
+        "lines": 34
+      },
+      {
+        "path": "src/expr_tracker/history/_store_types.py",
+        "lines": 207
+      },
+      {
+        "path": "src/expr_tracker/history/_store_writes.py",
+        "lines": 265
+      },
+      {
+        "path": "src/expr_tracker/history/codec.py",
+        "lines": 92
+      },
+      {
+        "path": "src/expr_tracker/history/frame.py",
+        "lines": 116
+      },
+      {
+        "path": "src/expr_tracker/history/naming.py",
+        "lines": 110
+      },
+      {
+        "path": "src/expr_tracker/history/reader.py",
+        "lines": 248
+      },
+      {
+        "path": "src/expr_tracker/history/rotation.py",
+        "lines": 23
+      },
+      {
+        "path": "src/expr_tracker/history/series.py",
+        "lines": 116
+      },
+      {
+        "path": "src/expr_tracker/history/store.py",
+        "lines": 739
+      },
+      {
+        "path": "src/expr_tracker/history/writer.py",
+        "lines": 338
+      },
+      {
+        "path": "src/expr_tracker/plugins.py",
+        "lines": 392
+      },
+      {
+        "path": "src/expr_tracker/run.py",
+        "lines": 557
+      },
+      {
+        "path": "src/expr_tracker/spans.py",
+        "lines": 446
+      },
+      {
+        "path": "src/expr_tracker/summary.py",
+        "lines": 80
+      },
+      {
+        "path": "src/expr_tracker/trace.py",
+        "lines": 117
+      },
+      {
+        "path": "src/expr_tracker/tracker.py",
+        "lines": 211
+      },
+      {
+        "path": "src/expr_tracker/types.py",
+        "lines": 11
+      },
+      {
+        "path": "tests/_callback_helpers.py",
+        "lines": 65
+      },
+      {
+        "path": "tests/_reader_edge_helpers.py",
+        "lines": 37
+      },
+      {
+        "path": "tests/_span_helpers.py",
+        "lines": 60
+      },
+      {
+        "path": "tests/_span_plugin_helpers.py",
+        "lines": 254
+      },
+      {
+        "path": "tests/_trace_helpers.py",
+        "lines": 122
+      },
+      {
+        "path": "tests/conftest.py",
+        "lines": 72
+      },
+      {
+        "path": "tests/test_alert_backends.py",
+        "lines": 417
+      },
+      {
+        "path": "tests/test_alert_delivery.py",
+        "lines": 495
+      },
+      {
+        "path": "tests/test_alert_dispatch.py",
+        "lines": 399
+      },
+      {
+        "path": "tests/test_alert_engine.py",
+        "lines": 215
+      },
+      {
+        "path": "tests/test_alert_models.py",
+        "lines": 151
+      },
+      {
+        "path": "tests/test_alert_native.py",
+        "lines": 328
+      },
+      {
+        "path": "tests/test_alert_routing.py",
+        "lines": 505
+      },
+      {
+        "path": "tests/test_artifacts.py",
+        "lines": 538
+      },
+      {
+        "path": "tests/test_benchmark.py",
+        "lines": 387
+      },
+      {
+        "path": "tests/test_cache.py",
+        "lines": 370
+      },
+      {
+        "path": "tests/test_callback_isolation.py",
+        "lines": 398
+      },
+      {
+        "path": "tests/test_callback_lifecycle.py",
+        "lines": 450
+      },
+      {
+        "path": "tests/test_cli.py",
+        "lines": 548
+      },
+      {
+        "path": "tests/test_commit_timestamps.py",
+        "lines": 131
+      },
+      {
+        "path": "tests/test_correctness.py",
+        "lines": 406
+      },
+      {
+        "path": "tests/test_distributed.py",
+        "lines": 479
+      },
+      {
+        "path": "tests/test_e2e.py",
+        "lines": 361
+      },
+      {
+        "path": "tests/test_examples.py",
+        "lines": 389
+      },
+      {
+        "path": "tests/test_expr_builder.py",
+        "lines": 164
+      },
+      {
+        "path": "tests/test_expr_eval.py",
+        "lines": 208
+      },
+      {
+        "path": "tests/test_expr_functions.py",
+        "lines": 399
+      },
+      {
+        "path": "tests/test_expr_parser.py",
+        "lines": 187
+      },
+      {
+        "path": "tests/test_expr_properties.py",
+        "lines": 323
+      },
+      {
+        "path": "tests/test_failure_modes.py",
+        "lines": 450
+      },
+      {
+        "path": "tests/test_features.py",
+        "lines": 533
+      },
+      {
+        "path": "tests/test_fork_safety.py",
+        "lines": 204
+      },
+      {
+        "path": "tests/test_frame_codec_summary.py",
+        "lines": 210
+      },
+      {
+        "path": "tests/test_history.py",
+        "lines": 478
+      },
+      {
+        "path": "tests/test_history_admission.py",
+        "lines": 208
+      },
+      {
+        "path": "tests/test_history_concurrency.py",
+        "lines": 128
+      },
+      {
+        "path": "tests/test_hot_paths.py",
+        "lines": 347
+      },
+      {
+        "path": "tests/test_integration.py",
+        "lines": 191
+      },
+      {
+        "path": "tests/test_lark.py",
+        "lines": 380
+      },
+      {
+        "path": "tests/test_native_commit_queue.py",
+        "lines": 121
+      },
+      {
+        "path": "tests/test_native_fast_paths.py",
+        "lines": 456
+      },
+      {
+        "path": "tests/test_native_metric_projection.py",
+        "lines": 136
+      },
+      {
+        "path": "tests/test_nonfinite_conditions.py",
+        "lines": 56
+      },
+      {
+        "path": "tests/test_perf.py",
+        "lines": 81
+      },
+      {
+        "path": "tests/test_plugin_cpu_time.py",
+        "lines": 243
+      },
+      {
+        "path": "tests/test_plugin_gpu_stats.py",
+        "lines": 549
+      },
+      {
+        "path": "tests/test_plugin_resources.py",
+        "lines": 159
+      },
+      {
+        "path": "tests/test_plugin_torch_memory.py",
+        "lines": 382
+      },
+      {
+        "path": "tests/test_process_compat.py",
+        "lines": 34
+      },
+      {
+        "path": "tests/test_public_surfaces.py",
+        "lines": 399
+      },
+      {
+        "path": "tests/test_reader_edge_cases.py",
+        "lines": 446
+      },
+      {
+        "path": "tests/test_reader_live_queries.py",
+        "lines": 403
+      },
+      {
+        "path": "tests/test_review_regressions.py",
+        "lines": 488
+      },
+      {
+        "path": "tests/test_rotation.py",
+        "lines": 267
+      },
+      {
+        "path": "tests/test_rule_lifecycle.py",
+        "lines": 482
+      },
+      {
+        "path": "tests/test_rule_overrides.py",
+        "lines": 69
+      },
+      {
+        "path": "tests/test_rule_quoted_names.py",
+        "lines": 40
+      },
+      {
+        "path": "tests/test_run_backends.py",
+        "lines": 391
+      },
+      {
+        "path": "tests/test_run_dir.py",
+        "lines": 212
+      },
+      {
+        "path": "tests/test_scenarios.py",
+        "lines": 430
+      },
+      {
+        "path": "tests/test_serialization_edge_cases.py",
+        "lines": 496
+      },
+      {
+        "path": "tests/test_series_edge_cases.py",
+        "lines": 115
+      },
+      {
+        "path": "tests/test_source_size.py",
+        "lines": 28
+      },
+      {
+        "path": "tests/test_span_coordination.py",
+        "lines": 381
+      },
+      {
+        "path": "tests/test_span_lifecycle.py",
+        "lines": 496
+      },
+      {
+        "path": "tests/test_span_plugins.py",
+        "lines": 448
+      },
+      {
+        "path": "tests/test_span_printing.py",
+        "lines": 402
+      },
+      {
+        "path": "tests/test_span_value_encoding.py",
+        "lines": 111
+      },
+      {
+        "path": "tests/test_spans.py",
+        "lines": 418
+      },
+      {
+        "path": "tests/test_step_commit.py",
+        "lines": 227
+      },
+      {
+        "path": "tests/test_step_types.py",
+        "lines": 81
+      },
+      {
+        "path": "tests/test_streams.py",
+        "lines": 509
+      },
+      {
+        "path": "tests/test_stress.py",
+        "lines": 249
+      },
+      {
+        "path": "tests/test_trace.py",
+        "lines": 357
+      },
+      {
+        "path": "tests/test_trace_export_failures.py",
+        "lines": 201
+      },
+      {
+        "path": "tests/test_trace_perf.py",
+        "lines": 230
+      },
+      {
+        "path": "tests/test_trace_queries.py",
+        "lines": 304
+      },
+      {
+        "path": "tests/test_trackio.py",
+        "lines": 229
+      },
+      {
+        "path": "tests/test_unicode_records.py",
+        "lines": 126
+      },
+      {
+        "path": "tests/test_value_encoding.py",
+        "lines": 372
+      },
+      {
+        "path": "tests/test_viewer.py",
+        "lines": 161
+      },
+      {
+        "path": "tests/test_wandb.py",
+        "lines": 259
+      },
+      {
+        "path": "tests/test_writer_async.py",
+        "lines": 764
+      },
+      {
+        "path": "tests/test_writer_buffer.py",
+        "lines": 287
+      },
+      {
+        "path": "tests/test_writer_bytes.py",
+        "lines": 659
+      },
+      {
+        "path": "tests/test_writer_diagnostics.py",
+        "lines": 607
+      },
+      {
+        "path": "tests/test_writer_durability.py",
+        "lines": 349
+      },
+      {
+        "path": "web/e2e/viewer.spec.ts",
+        "lines": 72
+      },
+      {
+        "path": "web/index.html",
+        "lines": 13
+      },
+      {
+        "path": "web/playwright.config.ts",
+        "lines": 8
+      },
+      {
+        "path": "web/src/api.test.ts",
+        "lines": 24
+      },
+      {
+        "path": "web/src/api.ts",
+        "lines": 75
+      },
+      {
+        "path": "web/src/main.ts",
+        "lines": 324
+      },
+      {
+        "path": "web/src/styles.css",
+        "lines": 58
+      },
+      {
+        "path": "web/vite.config.ts",
+        "lines": 11
+      },
+      {
+        "path": "web/vitest.config.ts",
+        "lines": 5
+      }
+    ]
+  },
+  "identity": {
+    "before_native_sha256": "98aae8c90ec6bea4e49d9db698a5f33d148562ecc8139fdc8c9af24d578637c2",
+    "after_native_sha256": "f057280aabedc5bcb77718eba7f9631e30521d49e31b91f98179101f81c0edcb",
+    "wheel_sha256": "682656af1ae8ac9b88de85be548f98fd9f86dccd9d4582469f981b7cff17295b",
+    "dependency_manifests_unchanged": true,
+    "unrelated_authored_sources_unchanged": true,
+    "moved_python_function_and_decorator_asts_unchanged": true,
+    "native_export_names_types_modules_and_signatures_unchanged": true,
+    "native_export_count": 63,
+    "original_parametrized_test_identities_preserved": 3210,
+    "added_regression_tests": 1,
+    "before_source_sha256": {
+      "benchmarks/compare_native.py": "8de57da1da604b8322163dfe793f57ed20529eef361e49eb5198500076088ba9",
+      "rust/alerts.rs": "8cd66965cda9b0436612d719b25dfaa0e20696abd1734fa3597f156ce0cebab2",
+      "rust/history/reader.rs": "8661a882f73511b3c8cdb284b3083889574e138862392d956e1cd4b9889dfbea",
+      "rust/history/state.rs": "5933b8c6361614ae12f7a333061ba7cb77b1b0f582d83dbde63b84b92be0c244",
+      "rust/history/writer.rs": "ed0eebbcc059fb31e4c0cfde11082a406f5d36716ed89555db31b2d8a56fc48e",
+      "rust/trace.rs": "667bcccff17928ac0e21697541856fcf26b78fb7b6a0967786f85ed3d9f300c2",
+      "rust/viewer.rs": "70f9dd4e1b3ed60bb221c6e3f838652a4d9919842ae4ecf3ccc29b70c46070d3",
+      "src/expr_tracker/history/store.py": "617ee053191c6a6ddb40579480911903a08470d18d87afa0d21904c7e563507e",
+      "tests/test_callback_isolation.py": "21c6c62cc5d75753aeef8b4f50f8086e0c341d8ac0a372bdb81390f1facceab3",
+      "tests/test_reader_edge_cases.py": "4806491555ca3edb2568d949b88ea5fe0a60277beb08a16c909f7ab124361486",
+      "tests/test_span_plugins.py": "efbb5b240a562e86de4e8aaab2e7711d68f40d93647060646f1ce56a8d5bb605",
+      "tests/test_spans.py": "4437a468103db25206365e4720019a440bebd9f42c34ef1f744657c94f308fdb",
+      "tests/test_trace.py": "d9cae00d381a1924203fd0d2c089eb324abe477760d09e55a6d1fc14422ece61"
+    },
+    "after_source_sha256": {
+      "benchmarks/compare_native.py": "e22e95c55a693566485b6c88feaa654e49f90a3167daf50605bdf83931cf34ef",
+      "benchmarks/native_workloads.py": "c5c8f4801b96c299503ae38103b6c8e8b804f3fd20f603a4758f53d0765f1952",
+      "rust/alerts.rs": "11648037bf5d477f1be92eaeba982f9aae4eee16d911406ba3abe040565491b9",
+      "rust/alerts/delivery.rs": "200c6a88864187a5b17f47617033564486dc76fda55891d507158f1e8a710c6a",
+      "rust/alerts/evaluation.rs": "d4d25f5e726161b8442cb75228fb90dbc24b0e748a77a41363208823c40ee066",
+      "rust/alerts/rules.rs": "12b7c03b196d08fae48d642318f03fa9bbc5c4f7e48c4f77adf0d720d5aa2889",
+      "rust/alerts/watchdog.rs": "97100be425f94a8b61a37c5ea7a226f8181c74077c375cd4998583efab307acc",
+      "rust/history/reader.rs": "0cdb3efc658c01c879329dfe3442b43f95826784ebbad27b8de5bbdcc76ef973",
+      "rust/history/reader/segments.rs": "eaf822d1843e5316825c6ad6410d0ae6663446bbecafc364d57075a77e1d5905",
+      "rust/history/state.rs": "21cb480348486f8aade75ae720d831f66b7a9fbf078acdb88c2d4b8897928ef6",
+      "rust/history/state/operations.rs": "b269323cdf29618ad481d42680c7ac4bb75ad78e7b93ca07809ee6b7126c9a1e",
+      "rust/history/writer.rs": "bfeec79cef49d38e1124f744037663b235cbbaea2ee783507606a0322f88d3f8",
+      "rust/history/writer/persistence.rs": "f04e2c00e61e7f6cc779d7c09bdca7fec0ecb525872584492ea0b52750350840",
+      "rust/history/writer/tests.rs": "fd6368d66ff05ef00269a7df2c75c1b0e432a3cf7a7cd4189fde4981c385cfaa",
+      "rust/trace.rs": "b2f2ca1bcc2e2a88e3104488c5d09264ba0bc34ad377dc57518d1ec1e98290e6",
+      "rust/trace/lanes.rs": "1fc526e84451ac156a848c2a3a5cd24c2bb12ab02be2a3b068b0792b1f2e990c",
+      "rust/viewer.rs": "10dde8fb604d49e6c465044b6239dc46e0405f2abb8f15b608d66d217d948ae3",
+      "rust/viewer/index.rs": "b07ad8bb7dc0b3b92ce237b318e5ce812200f9b7b829e30ecc0501f8e3a9acb3",
+      "rust/viewer/tests.rs": "4aab8fdcf1da0ecd1f27d60f5be244304fdb5881440739d44e0eeca94a6609d7",
+      "src/expr_tracker/history/_store_types.py": "8864ce327dcb17667995289b6cbc50892773795efc83999a92ae8c0017fe1e81",
+      "src/expr_tracker/history/_store_writes.py": "29e1ace20d42f3d398455113ae12c4f3e3ae119022457eacfd51fad1434e500e",
+      "src/expr_tracker/history/store.py": "9d0b0e80b346085439855b897ea54ca705ccb6c2a2f267dc44cc667b4e84c5c9",
+      "tests/_callback_helpers.py": "15121c745b40c63d5160ce3a1f205d4b9085e5fc45c17a42d40c6b2cb756120e",
+      "tests/_reader_edge_helpers.py": "191827d05450f9a33bcff11425e66072091de567370511546308af743f68e748",
+      "tests/_span_helpers.py": "50136ee5730532043e322364d769a9198a74e6e46a9a0ece5b3a854816b94b69",
+      "tests/_span_plugin_helpers.py": "6a257ec5f973bae41eca96cd1f340e6fb70fdcf9832d009a8cfd22dc8879c9c6",
+      "tests/_trace_helpers.py": "64211331bcec75736af47252063b7ef2e5225b1e9a1dccb777e515127ded88ee",
+      "tests/test_callback_isolation.py": "ffdd37536e85c739d01d2322ddbed446d47222564563d23782d7ed86c3343848",
+      "tests/test_callback_lifecycle.py": "c33eb28579b35aef1a79badf0906ade5c95c1938ddd90f9f5077f0d2e3cebb64",
+      "tests/test_plugin_cpu_time.py": "22a711016a988c7f3d8564fda21e5fde33d8dd2b8818fccb7191974f92e8c0e7",
+      "tests/test_plugin_gpu_stats.py": "49d125d041702ebc5b3354d3a4e000d621d52979c80a005282f6291e57f52480",
+      "tests/test_plugin_resources.py": "a966d8174837e26b3acff9970a2f71ddff8ec1d098102c7d96d99a11d035feb4",
+      "tests/test_plugin_torch_memory.py": "7ddf583bdb7e85e85eac20856a74810625ecad744f940830ddc54d1009790802",
+      "tests/test_reader_edge_cases.py": "e12a10edd0894dcc75dd3738e9dcecc6b33407146999074d4c78fc33d8b79cae",
+      "tests/test_reader_live_queries.py": "1e1efe9d2babff64a0c00930174f918bb4345a6d6a4da8956bb29c9009833ca9",
+      "tests/test_span_coordination.py": "6d2a085c1a027ecbee5e3e515df9339865f137de4d9c18c1b06f62380c9212aa",
+      "tests/test_span_plugins.py": "ff0ac4f3b9e3b67760957d500bda9206e4b00145d97d4b4dc3760c46606c9258",
+      "tests/test_span_printing.py": "6bc4f2184a961a37ec9d4717b93cda8356287cb072798d69604b2bb3552c17a3",
+      "tests/test_spans.py": "80caca868bd9ea44dc2192fa8f504534e2b445c42b8a32044f5f50208c1ee465",
+      "tests/test_trace.py": "ebbaed99c4db8630600ec04766f4df4eecc7371a6804811106f24466596f9ff1",
+      "tests/test_trace_export_failures.py": "d252843a20b7e316ba5f146b311c96380a24ff6c8c14649898eb10f16a290606",
+      "tests/test_trace_queries.py": "f1208b3f011794aec5c894c8cf494d9f863de2b3589bc1d13b68303e25d191e3"
+    }
+  },
+  "validation": {
+    "rust_passed": 31,
+    "independent_extracted_wheel_passed": 437,
+    "full_sdk": {
+      "passed": 3205,
+      "failed": 1,
+      "skipped": 5
+    },
+    "full_sdk_failure": "Original artifact exact-atime download assertion at tests/test_artifacts.py:233. Artifact implementation and precision assertion byte-identical to frozen baseline; previously demonstrated uncontrolled external-access interference remains blocked, not resolved or hidden.",
+    "python_lint_and_format": "All changed Python sources pass existing Ruff checks and format.",
+    "moved_python_ast_equivalence": true,
+    "benchmark_cli": "18 fresh-process alternating trials, same build profile, frozen old SDK/native versus extracted new wheel, CPU23; no tests/builds overlap measurement.",
+    "hundred_metric_physical_rows_checked": 37200,
+    "hundred_metric_values_checked": 3720000,
+    "benchmark_scope": "Short functional/performance smoke of split harness, not a statistically conclusive performance campaign. Every physical metric row/step/field/value checked."
+  },
+  "benchmark_smoke": {
+    "environment": {
+      "timestamp_utc": "2026-10-13T02:57:47.863585+00:00",
+      "python": "3.12.13 (main, Jul 23 2026, 14:43:28) [Clang 22.1.3 ]",
+      "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "pinned_cpu": 23,
+      "repeats": 3,
+      "clock": "perf_counter_ns / process_time_ns",
+      "gc": "enabled; collected before each measured batch",
+      "io": "warm OS page cache; no fsync; final buffer drain included",
+      "memory": "fresh-process Linux RSS, including native allocations",
+      "baseline_source": "<artifact-path>",
+      "native_source": "<artifact-path>",
+      "native_binary_sha256": "f057280aabedc5bcb77718eba7f9631e30521d49e31b91f98179101f81c0edcb",
+      "dependencies": {
+        "click": "8.2.1",
+        "filelock": "3.32.2",
+        "loguru": "0.7.3",
+        "pydantic": "2.11.7",
+        "python-dotenv": "1.2.2",
+        "numpy": "2.3.2",
+        "pandas": "2.3.1",
+        "polars": "1.43.2"
+      },
+      "baseline_native_binary_sha256": "98aae8c90ec6bea4e49d9db698a5f33d148562ecc8139fdc8c9af24d578637c2"
+    },
+    "fixture": {
+      "rows": 1000,
+      "patch_steps": 1000,
+      "trace_rows": 1000,
+      "checkpoint_digest": "341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1",
+      "files": {
+        "bundle/file-000.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-001.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-002.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-003.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-004.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-005.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-006.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-007.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-008.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-009.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-010.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-011.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-012.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-013.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-014.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-015.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-016.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-017.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-018.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-019.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-020.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-021.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-022.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-023.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-024.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-025.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-026.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-027.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-028.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-029.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-030.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-031.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-032.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-033.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-034.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-035.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-036.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-037.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-038.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-039.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-040.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-041.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-042.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-043.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-044.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-045.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-046.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-047.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-048.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-049.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-050.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-051.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-052.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-053.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-054.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-055.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-056.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-057.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-058.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-059.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-060.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-061.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-062.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-063.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-064.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-065.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-066.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-067.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-068.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-069.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-070.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-071.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-072.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-073.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-074.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-075.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-076.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-077.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-078.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-079.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-080.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-081.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-082.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-083.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-084.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-085.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-086.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-087.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-088.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-089.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-090.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-091.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-092.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-093.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-094.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-095.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-096.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-097.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-098.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-099.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-100.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-101.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-102.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-103.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-104.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-105.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-106.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-107.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-108.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-109.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-110.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-111.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-112.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-113.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-114.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-115.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-116.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-117.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-118.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-119.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-120.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-121.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-122.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-123.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-124.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-125.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-126.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "bundle/file-127.bin": {
+          "bytes": 16384,
+          "sha256": "a1f259d4365ed4320c377ce26f5c8c56dcdc9a89e7b641bfd8eabfbbeac86654"
+        },
+        "checkpoint.bin": {
+          "bytes": 16777216,
+          "sha256": "341aacac661ccb210720bedaa9ead5d668fe5ea41a73532fc147c71e34040df1"
+        },
+        "ordered/metrics.jsonl": {
+          "bytes": 121530,
+          "sha256": "ef95de0fce7ca76248b20f60394bacde704ab963a6e3f2c1471ce34b217ab306"
+        },
+        "ordered/metrics.meta.json": {
+          "bytes": 226,
+          "sha256": "d3cfdeb02144102be66325b95739499dd862c897686e70838d4e0d493f43664f"
+        },
+        "ordered/spans.meta.json": {
+          "bytes": 126,
+          "sha256": "0cdcc40147a515b9a06cbb4254248a85e6b67c3aa330fee1d992adf8cd05a76b"
+        },
+        "patched/metrics.jsonl": {
+          "bytes": 182127,
+          "sha256": "1941f43f48bc22e33d490de8eb38d9b57aaf7ed1020fcf1e3941dcdcce5dc3a4"
+        },
+        "patched/metrics.meta.json": {
+          "bytes": 242,
+          "sha256": "04e8337bfedfe6d4dc9f0fd76f01161214a5f5e8913bfa99ca7d01ecf73da543"
+        },
+        "patched/spans.meta.json": {
+          "bytes": 126,
+          "sha256": "0cdcc40147a515b9a06cbb4254248a85e6b67c3aa330fee1d992adf8cd05a76b"
+        },
+        "spans.jsonl": {
+          "bytes": 345890,
+          "sha256": "1da02d03bba674a8677c0c2b2c28390493432deeb279e4253e4383478849ee9f"
+        }
+      }
+    },
+    "trials": [
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.148666301,
+        "cpu_seconds": 0.148663926,
+        "mean_us": 49.555433666666666,
+        "p50_us": 44.363,
+        "p95_us": 66.133,
+        "p99_us": 153.354,
+        "calls_per_second": 20179.421831447868,
+        "import_rss_bytes": 39358464,
+        "ready_rss_bytes": 40955904,
+        "final_rss_bytes": 54923264,
+        "peak_rss_bytes": 54738944,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686615,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "before",
+        "repeat": 0
+      },
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.149828699,
+        "cpu_seconds": 0.149812673,
+        "mean_us": 49.94289966666667,
+        "p50_us": 44.824,
+        "p95_us": 68.227,
+        "p99_us": 152.513,
+        "calls_per_second": 20022.86624673955,
+        "import_rss_bytes": 39149568,
+        "ready_rss_bytes": 40738816,
+        "final_rss_bytes": 54595584,
+        "peak_rss_bytes": 54247424,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686555,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "after",
+        "repeat": 0
+      },
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.150274647,
+        "cpu_seconds": 0.150253514,
+        "mean_us": 50.091549,
+        "p50_us": 44.402,
+        "p95_us": 68.006,
+        "p99_us": 158.765,
+        "calls_per_second": 19963.44732721282,
+        "import_rss_bytes": 39182336,
+        "ready_rss_bytes": 40771584,
+        "final_rss_bytes": 54628352,
+        "peak_rss_bytes": 54276096,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686564,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "after",
+        "repeat": 1
+      },
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.148560735,
+        "cpu_seconds": 0.148566124,
+        "mean_us": 49.520244999999996,
+        "p50_us": 44.233,
+        "p95_us": 66.513,
+        "p99_us": 153.325,
+        "calls_per_second": 20193.761157684094,
+        "import_rss_bytes": 39247872,
+        "ready_rss_bytes": 40845312,
+        "final_rss_bytes": 54812672,
+        "peak_rss_bytes": 54636544,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686554,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "before",
+        "repeat": 1
+      },
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.15201563,
+        "cpu_seconds": 0.152004312,
+        "mean_us": 50.67187666666667,
+        "p50_us": 45.274,
+        "p95_us": 68.346,
+        "p99_us": 158.374,
+        "calls_per_second": 19734.81279523691,
+        "import_rss_bytes": 39268352,
+        "ready_rss_bytes": 40865792,
+        "final_rss_bytes": 54833152,
+        "peak_rss_bytes": 54657024,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686606,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "before",
+        "repeat": 2
+      },
+      {
+        "case": "run_metrics_100_default",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.152072255,
+        "cpu_seconds": 0.149548453,
+        "mean_us": 50.690751666666664,
+        "p50_us": 44.342,
+        "p95_us": 68.096,
+        "p99_us": 155.86,
+        "calls_per_second": 19727.46442143572,
+        "import_rss_bytes": 39161856,
+        "ready_rss_bytes": 40751104,
+        "final_rss_bytes": 54607872,
+        "peak_rss_bytes": 54255616,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686537,
+          "cache_limit_bytes": 1073741824,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 50,
+          "validated_rows": 3100
+        },
+        "implementation": "after",
+        "repeat": 2
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.202982002,
+        "cpu_seconds": 0.202967507,
+        "mean_us": 67.66066733333332,
+        "p50_us": 60.242,
+        "p95_us": 93.944,
+        "p99_us": 152.253,
+        "calls_per_second": 14779.635487091116,
+        "import_rss_bytes": 39354368,
+        "ready_rss_bytes": 40960000,
+        "final_rss_bytes": 54816768,
+        "peak_rss_bytes": 54738944,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686583,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "before",
+        "repeat": 0
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.192404964,
+        "cpu_seconds": 0.19241013,
+        "mean_us": 64.134988,
+        "p50_us": 59.71,
+        "p95_us": 83.124,
+        "p99_us": 102.49,
+        "calls_per_second": 15592.113309508999,
+        "import_rss_bytes": 39174144,
+        "ready_rss_bytes": 40841216,
+        "final_rss_bytes": 54702080,
+        "peak_rss_bytes": 54464512,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686589,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "after",
+        "repeat": 0
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.195538231,
+        "cpu_seconds": 0.195533081,
+        "mean_us": 65.17941033333334,
+        "p50_us": 60.292,
+        "p95_us": 83.505,
+        "p99_us": 112.629,
+        "calls_per_second": 15342.268285121183,
+        "import_rss_bytes": 39165952,
+        "ready_rss_bytes": 40833024,
+        "final_rss_bytes": 54693888,
+        "peak_rss_bytes": 54456320,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686593,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "after",
+        "repeat": 1
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.191470118,
+        "cpu_seconds": 0.191467185,
+        "mean_us": 63.823372666666664,
+        "p50_us": 58.98,
+        "p95_us": 80.56,
+        "p99_us": 106.006,
+        "calls_per_second": 15668.24124482965,
+        "import_rss_bytes": 39264256,
+        "ready_rss_bytes": 40869888,
+        "final_rss_bytes": 54726656,
+        "peak_rss_bytes": 54644736,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686529,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "before",
+        "repeat": 1
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.192487327,
+        "cpu_seconds": 0.192479499,
+        "mean_us": 64.16244233333333,
+        "p50_us": 59.3,
+        "p95_us": 83.736,
+        "p99_us": 107.039,
+        "calls_per_second": 15585.441632736683,
+        "import_rss_bytes": 39260160,
+        "ready_rss_bytes": 40865792,
+        "final_rss_bytes": 54722560,
+        "peak_rss_bytes": 54640640,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686579,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "before",
+        "repeat": 2
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.194067698,
+        "cpu_seconds": 0.194049481,
+        "mean_us": 64.68923266666667,
+        "p50_us": 59.571,
+        "p95_us": 85.679,
+        "p99_us": 103.282,
+        "calls_per_second": 15458.523138662673,
+        "import_rss_bytes": 39239680,
+        "ready_rss_bytes": 40906752,
+        "final_rss_bytes": 54767616,
+        "peak_rss_bytes": 54530048,
+        "details": {
+          "log_dir": "<artifact-path>",
+          "metrics_file": "<artifact-path>",
+          "rows_on_disk": 3100,
+          "last_step": 3099,
+          "rows_logged": 3100,
+          "pending_bytes": 0,
+          "span_pending_bytes": 0,
+          "dropped_records": 0,
+          "dropped_spans": 0,
+          "cached_rows": 3100,
+          "cached_bytes": 5686525,
+          "cache_limit_bytes": 67108864,
+          "disk_prefix": false,
+          "evicted_rows": 0,
+          "queries": 0,
+          "disk_queries": 0,
+          "validated_metric_fields": 100,
+          "series_window": 4096,
+          "writer_buffer_size": 200,
+          "validated_rows": 3100,
+          "backend_calls": 3100
+        },
+        "implementation": "after",
+        "repeat": 2
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.047301305,
+        "cpu_seconds": 0.047292583,
+        "mean_us": 15.767101666666665,
+        "p50_us": 12.935,
+        "p95_us": 34.173,
+        "p99_us": 77.834,
+        "calls_per_second": 63423.197309249714,
+        "import_rss_bytes": 39268352,
+        "ready_rss_bytes": 40558592,
+        "final_rss_bytes": 41115648,
+        "peak_rss_bytes": 40894464,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "before",
+        "repeat": 0
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.047488393,
+        "cpu_seconds": 0.047493758,
+        "mean_us": 15.829464333333332,
+        "p50_us": 13.054,
+        "p95_us": 34.134,
+        "p99_us": 75.55,
+        "calls_per_second": 63173.33163916497,
+        "import_rss_bytes": 39137280,
+        "ready_rss_bytes": 40370176,
+        "final_rss_bytes": 40910848,
+        "peak_rss_bytes": 40677376,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "after",
+        "repeat": 0
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.048384997,
+        "cpu_seconds": 0.048389094,
+        "mean_us": 16.128332333333333,
+        "p50_us": 13.224,
+        "p95_us": 34.374,
+        "p99_us": 75.179,
+        "calls_per_second": 62002.69062742734,
+        "import_rss_bytes": 39133184,
+        "ready_rss_bytes": 40370176,
+        "final_rss_bytes": 40910848,
+        "peak_rss_bytes": 40677376,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "after",
+        "repeat": 1
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.047994101,
+        "cpu_seconds": 0.047999017,
+        "mean_us": 15.998033666666664,
+        "p50_us": 13.094,
+        "p95_us": 33.843,
+        "p99_us": 73.987,
+        "calls_per_second": 62507.68193366098,
+        "import_rss_bytes": 39342080,
+        "ready_rss_bytes": 40628224,
+        "final_rss_bytes": 41177088,
+        "peak_rss_bytes": 40960000,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "before",
+        "repeat": 1
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.049258359,
+        "cpu_seconds": 0.049262228,
+        "mean_us": 16.419453,
+        "p50_us": 13.675,
+        "p95_us": 34.224,
+        "p99_us": 76.061,
+        "calls_per_second": 60903.36870540084,
+        "import_rss_bytes": 39280640,
+        "ready_rss_bytes": 40570880,
+        "final_rss_bytes": 41123840,
+        "peak_rss_bytes": 40837120,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "before",
+        "repeat": 2
+      },
+      {
+        "case": "span_sync",
+        "native": true,
+        "module": "<artifact-path>",
+        "count": 3000,
+        "wall_seconds": 0.048975253,
+        "cpu_seconds": 0.048980043,
+        "mean_us": 16.325084333333333,
+        "p50_us": 13.395,
+        "p95_us": 34.704,
+        "p99_us": 75.17,
+        "calls_per_second": 61255.426286414484,
+        "import_rss_bytes": 39243776,
+        "ready_rss_bytes": 40480768,
+        "final_rss_bytes": 41017344,
+        "peak_rss_bytes": 40722432,
+        "details": {
+          "spans": 3100
+        },
+        "implementation": "after",
+        "repeat": 2
+      }
+    ],
+    "summary": [
+      {
+        "case": "run_metrics_100_default",
+        "before": {
+          "mean_us": 49.555433666666666,
+          "p50_us": 44.363,
+          "p95_us": 66.513,
+          "p99_us": 153.354,
+          "calls_per_second": 20179.421831447868,
+          "wall_seconds": 0.148666301,
+          "cpu_seconds": 0.148663926,
+          "import_rss_bytes": 39268352,
+          "ready_rss_bytes": 40865792,
+          "final_rss_bytes": 54833152,
+          "peak_rss_bytes": 54657024,
+          "variation_pct": 1.3121545450286982
+        },
+        "after": {
+          "mean_us": 50.091549,
+          "p50_us": 44.402,
+          "p95_us": 68.096,
+          "p99_us": 155.86,
+          "calls_per_second": 19963.44732721282,
+          "wall_seconds": 0.150274647,
+          "cpu_seconds": 0.149812673,
+          "import_rss_bytes": 39161856,
+          "ready_rss_bytes": 40751104,
+          "final_rss_bytes": 54607872,
+          "peak_rss_bytes": 54255616,
+          "variation_pct": 0.7879912552234488
+        },
+        "speedup": 0.9892972897816888,
+        "latency_change_pct": 1.0818497461640542
+      },
+      {
+        "case": "run_metrics_100_backend",
+        "before": {
+          "mean_us": 64.16244233333333,
+          "p50_us": 59.3,
+          "p95_us": 83.736,
+          "p99_us": 107.039,
+          "calls_per_second": 15585.441632736683,
+          "wall_seconds": 0.192487327,
+          "cpu_seconds": 0.192479499,
+          "import_rss_bytes": 39264256,
+          "ready_rss_bytes": 40869888,
+          "final_rss_bytes": 54726656,
+          "peak_rss_bytes": 54644736,
+          "variation_pct": 3.2574434091431645
+        },
+        "after": {
+          "mean_us": 64.68923266666667,
+          "p50_us": 59.71,
+          "p95_us": 83.505,
+          "p99_us": 103.282,
+          "calls_per_second": 15458.523138662673,
+          "wall_seconds": 0.194067698,
+          "cpu_seconds": 0.194049481,
+          "import_rss_bytes": 39174144,
+          "ready_rss_bytes": 40841216,
+          "final_rss_bytes": 54702080,
+          "peak_rss_bytes": 54464512,
+          "variation_pct": 0.8080342023506079
+        },
+        "speedup": 0.9918565994429428,
+        "latency_change_pct": 0.8210259992856628
+      },
+      {
+        "case": "span_sync",
+        "before": {
+          "mean_us": 15.998033666666664,
+          "p50_us": 13.094,
+          "p95_us": 34.173,
+          "p99_us": 76.061,
+          "calls_per_second": 62507.68193366098,
+          "wall_seconds": 0.047994101,
+          "cpu_seconds": 0.047999017,
+          "import_rss_bytes": 39280640,
+          "ready_rss_bytes": 40570880,
+          "final_rss_bytes": 41123840,
+          "peak_rss_bytes": 40894464,
+          "variation_pct": 2.05944522658136
+        },
+        "after": {
+          "mean_us": 16.128332333333333,
+          "p50_us": 13.224,
+          "p95_us": 34.374,
+          "p99_us": 75.179,
+          "calls_per_second": 62002.69062742734,
+          "wall_seconds": 0.048384997,
+          "cpu_seconds": 0.048389094,
+          "import_rss_bytes": 39137280,
+          "ready_rss_bytes": 40370176,
+          "final_rss_bytes": 40910848,
+          "peak_rss_bytes": 40677376,
+          "variation_pct": 1.5505939643723654
+        },
+        "speedup": 0.9919211320815002,
+        "latency_change_pct": 0.8144667612380196
+      }
+    ]
+  },
+  "tradeoffs": [
+    "More files/import declarations; does not reduce total implementation or state.",
+    "HistoryWrites is a state-sharing mixin, not another owner/adapter object; legacy serialization remains on HistoryStore to preserve module-level encode_line hooks.",
+    "Short-smoke default/backend/span median means move by roughly +1%; variation and sample length do not establish a causal slowdown or universal no-impact guarantee. No speedup claimed.",
+    "Internal defining modules and test file paths change; public import locations and native exports remain available, and original test names/parametrizations are preserved."
+  ],
+  "commits_pushes_releases": false
+}

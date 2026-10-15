@@ -31,7 +31,7 @@ jobs:
           enable-cache: true
 
       - name: Build
-        run: uv run --group docs mkdocs build --strict
+        run: uv run --only-group docs mkdocs build --strict
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

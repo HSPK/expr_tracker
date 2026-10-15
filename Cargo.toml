@@ -1,0 +1,49 @@
+[package]
+name = "expr-tracker-native"
+version = "0.4.1"
+edition = "2021"
+license = "MIT"
+publish = false
+exclude = [
+    "web/node_modules/**",
+    "web/test-results/**",
+    "web/playwright-report/**",
+    ".venv/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    "site/**",
+    "dist/**",
+]
+
+[lib]
+name = "_native"
+path = "rust/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+axum = "0.8"
+fs2 = "0.4"
+indexmap = "2"
+memchr = "2"
+parking_lot = "0.12"
+pyo3 = { version = "0.27", features = ["abi3-py310", "multiple-pymethods"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rusqlite = { version = "0.37", features = ["bundled", "functions", "hooks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "raw_value", "preserve_order"] }
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.6", features = ["fs"] }
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dev-dependencies]
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

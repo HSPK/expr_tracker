@@ -1,144 +1,110 @@
-"""Bounded per-metric numeric buffers backing alert evaluation (never hits disk).
-
-Lists with amortised trimming beat ``deque`` here: ``points[-count:]`` is O(count),
-while a deque cannot be sliced and would copy the whole buffer on every window read.
-"""
+"""SDK numeric/name normalization for Rust-owned bounded metric windows."""
 
 from __future__ import annotations
 
+import json
 import math
-import threading
-from collections.abc import Iterable, Sequence
+from functools import lru_cache
 
 from loguru import logger
 
-Point = tuple[int, float, float]  # (step, timestamp, value)
+from .._native import NativeMetricSeries
 
+Point = tuple[int, float, float]
 DEFAULT_WINDOW = 4096
 
 
+def _key(name):
+    if type(name) is str:
+        return _string_key(name)
+    return json.dumps(name, ensure_ascii=True)
+
+
+@lru_cache(maxsize=4096)
+def _string_key(name):
+    return json.dumps(name, ensure_ascii=True)
+
+
+def _point(point):
+    return (int(point[0]), point[1], point[2])
+
+
 class MetricSeries:
-    """Keep the last ``window`` numeric points per metric name.
+    def __init__(self, window=DEFAULT_WINDOW):
+        self._native = NativeMetricSeries(max(2, int(window)))
 
-    Non-numeric metrics only register their name, so ``has()`` still sees them.
-    """
+    @property
+    def window(self):
+        return self._native.window
 
-    def __init__(self, window: int = DEFAULT_WINDOW):
-        self.window = max(2, int(window))
-        self._trim_at = self.window * 2
-        self._series: dict[str, list[Point]] = {}
-        self._non_numeric: set[str] = set()
-        self._lock = threading.RLock()
+    def ensure_capacity(self, window):
+        self._native.ensure_capacity(max(0, int(window)))
 
-    def ensure_capacity(self, window: int):
-        """Grow the retained window so a rule asking for ``window`` points is exact."""
-        window = int(window)
-        with self._lock:
-            if window <= self.window:
-                return
-            self.window = window
-            self._trim_at = window * 2
-
-    def add(self, step: int, ts: float, record: dict):
-        with self._lock:
+    def add(self, step, ts, record):
+        if type(record) is dict:
+            warnings = self._native.add_record(str(step), float(ts), record)
+        else:
+            normalized = []
             for key, value in record.items():
                 if key.startswith("_"):
                     continue
                 try:
-                    number = _as_float(value)
+                    normalized.append((_key(key), _as_float(value), False))
                 except (OverflowError, TypeError, ValueError):
-                    # Valid JSON integers can exceed the alert series' float range.
-                    if key not in self._non_numeric:
-                        logger.warning(
-                            f"Metric {key!r} cannot be represented as a float; "
-                            "skipping its numeric series."
-                        )
-                    self._non_numeric.add(key)
-                    continue
-                if number is None:
-                    self._non_numeric.add(key)
-                    continue
-                series = self._series.get(key)
-                if series is None:
-                    series = self._series[key] = []
-                series.append((step, ts, number))
-                if len(series) > self._trim_at:
-                    del series[: len(series) - self.window]
+                    normalized.append((_key(key), None, True))
+            warnings = self._native.add(str(step), float(ts), normalized)
+        for key in warnings:
+            logger.warning(
+                f"Metric {json.loads(key)!r} cannot be represented as a float; "
+                "skipping its numeric series."
+            )
 
-    def backfill(self, records: Iterable[dict]):
-        """Preload from history on resume so windows work across restarts."""
-        invalid_timestamps = 0
+    _native_add = add
+
+    def backfill(self, records):
+        invalid = 0
         for record in records:
             step = record.get("_step")
             if isinstance(step, int):
                 timestamp = _timestamp(record.get("_time"))
                 if timestamp is None:
-                    invalid_timestamps += 1
+                    invalid += 1
                     continue
                 self.add(step, timestamp, record)
-        if invalid_timestamps:
+        if invalid:
             logger.warning(
-                f"Skipped {invalid_timestamps} history rows with invalid timestamps "
+                f"Skipped {invalid} history rows with invalid timestamps "
                 "during alert backfill."
             )
 
-    # ------------------------------------------------------------------ queries
+    def names(self):
+        return {json.loads(name) for name in self._native.names()}
 
-    def names(self) -> set[str]:
-        with self._lock:
-            return set(self._series) | set(self._non_numeric)
+    def has(self, name):
+        return self._native.has(_key(name))
 
-    def has(self, name: str) -> bool:
-        with self._lock:
-            return name in self._series or name in self._non_numeric
+    def points(self, name):
+        return tuple(map(_point, self._native.points(_key(name))))
 
-    def points(self, name: str) -> Sequence[Point]:
-        with self._lock:
-            series = self._series.get(name)
-            return tuple(series[-self.window :]) if series else ()
+    def window_points(self, name, count=None, duration=None, now=None):
+        points = self._native.window_points(_key(name), count, duration, now)
+        return list(map(_point, points)) if points is not None else ()
 
-    def window_points(
-        self,
-        name: str,
-        count: int | None = None,
-        duration: float | None = None,
-        now: float | None = None,
-    ) -> Sequence[Point]:
-        """Take the last ``count`` points, or those within ``duration`` seconds."""
-        with self._lock:
-            series = self._series.get(name)
-            if not series:
-                return ()
-            start = max(0, len(series) - (count if count is not None else self.window))
-            if duration is not None:
-                cutoff = (now if now is not None else series[-1][1]) - duration
-                index = len(series)
-                while index > start and series[index - 1][1] >= cutoff:
-                    index -= 1
-                start = index
-            return series[start:]
-
-    def latest(self, name: str) -> Point | None:
-        with self._lock:
-            series = self._series.get(name)
-            return series[-1] if series else None
+    def latest(self, name):
+        point = self._native.latest(_key(name))
+        return _point(point) if point is not None else None
 
     def clear(self):
-        with self._lock:
-            self._series.clear()
-            self._non_numeric.clear()
+        self._native.clear()
 
 
-def _as_float(value) -> float | None:
-    """Coerce to float, keeping NaN/inf so ``isnan()``/``isinf()`` can see them."""
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float)):
+def _as_float(value):
+    if isinstance(value, (bool, int, float)):
         return float(value)
     return None
 
 
-def _timestamp(value) -> float | None:
+def _timestamp(value):
     if value is None:
         return 0.0
     if isinstance(value, bool):

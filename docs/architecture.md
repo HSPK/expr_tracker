@@ -3,32 +3,94 @@
 How the pieces fit together, and which module owns what. Pair this with
 [`design.md`](design.md), which records *why* the data model looks the way it does.
 
-## Module map
+## Native core and SDK boundary
+
+The package is a mixed Rust/Python distribution built with maturin. The
+`expr_tracker._native` ABI3 extension owns the core algorithms; Python retains
+the public SDK and integration boundaries. JSONL remains the source of truth.
+
+| Surface | Rust ownership | Python ownership |
+| --- | --- | --- |
+| History | row assembly, cache/query planning, numeric series, segmented I/O, buffering, rotation, resume, index/meta persistence, ordered commit tickets | public options, normalization, output frames, lifecycle and callback adapters |
+| Alerts | parsing, compiled evaluation, rule transitions, watchdog/retry/rate-limit/dedup/queue state | models, formatting, channel/backend callbacks and SDK coordination |
+| Spans | timer/lifecycle state and reductions | ContextVar nesting, decorators and plugins |
+| Artifacts and summary | manifests, publication, aliases, copy/digest/locking, lineage append and summary persistence | public objects and value conversion |
+| Trace export | segmented span reads, lane assignment and trace construction | CLI/public entry points |
+| Local viewer | HTTP server, discovery, query indexing and chart sampling | Click command that starts the server |
+
+The frontend in `web/` is TypeScript/Vite/uPlot. Its built assets are included in
+the Python wheel; Node.js is only needed when developing or building those assets.
+
+Artifact copies restore permissions and nanosecond modification/access times;
+copy publication restores them again after checksum verification reads the
+destination. These are mutable filesystem timestamps, not immutable manifest
+fields: subsequent reads can change access time. Exact-atime integration checks
+require control over other readers, including readers outside the SDK process.
+The exact-metadata fixture validates a read-stable test filesystem. On supported
+Linux filesystems it sets the owner-controlled `noatime` inode flag only on its
+private pytest directory and existing children; new files must inherit that
+policy. This leaves explicit timestamp setting and nanosecond assertions intact
+without changing production copies or system-wide mounts. Unsupported environments
+fail with a request for a real `noatime` test filesystem, rather than retrying or
+silently skipping precision checks.
+
+## SDK module map
 
 ```
 expr_tracker/
 ├── __init__.py        public names re-exported for `import expr_tracker as et`
 ├── tracker.py         the functional API (init/log/history/finish/artifacts/summary)
 ├── run.py             Run object + global singleton + backend fan-out
-├── summary.py         run.summary mapping, persisted as summary.json
-├── artifacts.py       Artifact + project-scoped ArtifactStore
+├── summary.py         run.summary mapping adapter
+├── artifacts.py       Artifact + project-scoped ArtifactStore adapters
 ├── encoders.py        JSON coercion (numpy/torch/pydantic/dataclasses/...)
-├── cli.py             `et history` / `et rules` / `et alert`
+├── cli.py             `et history` / `et rules` / `et alert` / `et serve`
 ├── history/
-│   ├── store.py       HistoryStore: open-row assembly, cache, query planning
-│   ├── writer.py      JsonlWriter: buffered append, sparse index, meta sidecar
-│   ├── reader.py      JsonlReader + the offline read_history entry points
+│   ├── store.py       HistoryStore lifecycle and native state/callback adapter
+│   ├── _store_types.py options and transaction/notification boundary types
+│   ├── _store_writes.py state-sharing metric/span admission mixin
+│   ├── writer.py      JsonlWriter adapter for NativeWriter
+│   ├── reader.py      JsonlReader adapter + offline read_history entry points
 │   ├── codec.py       RecordCodec: metric values -> JSON lines, warn-once
-│   ├── series.py      MetricSeries: per-metric numeric buffers
+│   ├── series.py      MetricSeries adapter for NativeMetricSeries
 │   └── frame.py       projection + dict/pandas/polars output
 └── alerts/
     ├── __init__.py    public alert API + config resolution + engine wiring
     ├── models.py      AlertLevel/Message/ChannelConfig/WebhookPolicy/AlertRule
-    ├── engine.py      rule compilation, state machine, watchdog
-    ├── dispatch.py    routing, rate limiting, dedup, retry, async worker
+    ├── engine.py      native rule/watchdog adapters and callback coordination
+    ├── dispatch.py    native dispatch-state adapter and backend invocation
     ├── backends/      lark, slack, dingtalk, wecom, webhook, email, callable
-    └── expr/          lexer, parser, AST nodes + builder, functions, evaluator
+    └── expr/          public AST/builders and native parser/evaluator adapters
 ```
+
+Native implementation modules live under `rust/`: `history/`, `alerts.rs`,
+`alerts_parser.rs`, `alerts_plan.rs`, `spans.rs`, `artifacts.rs`, `summary.rs`,
+`trace.rs`, and `viewer.rs`. `rust/lib.rs` registers their Python bindings.
+
+Large native surfaces have private responsibility modules: `alerts/` separates
+evaluation, rule transitions, delivery and watchdog lifecycle;
+`history/reader/segments.rs` owns segmented snapshots/I/O while `reader.rs`
+adapts Python calls; `history/state/operations.rs` groups native commit and query
+operations; `history/writer/persistence.rs` owns flush, rollback and close methods;
+`viewer/index.rs` owns temporary index refresh, `viewer/directories.rs` owns
+server-path resolution and bounded directory browsing; and `trace/lanes.rs` owns lane
+allocation. Writer/viewer unit tests live separately beside their implementations.
+These are ordinary modules and inherent methods, not new forwarding APIs or
+owners: locks, buffers and callback ordering stay on their existing objects.
+
+`HistoryStore` shares its state with the private `HistoryWrites` mixin rather than
+allocating a second adapter object. Compatibility serialization stays in
+`store.py`, preserving the existing module-level `encode_line` hook. Public
+options and helper imports remain available from their original module.
+
+Handwritten source files, tests and benchmark scripts are limited to **800
+physical lines**, including comments and blanks. Generated Web assets and
+third-party dependencies are excluded. `tests/test_source_size.py` enforces the
+limit for the source trees. Regression suites are grouped by responsibility
+with shared fixtures/helpers; benchmark orchestration remains in
+`benchmarks/compare_native.py`, with workload bodies/output checks in
+`benchmarks/native_workloads.py`. Splitting files is a readability change, not
+a claim of fewer algorithms, less state, or improved performance.
 
 ## Dependency direction
 
@@ -48,45 +110,141 @@ Rules:
 * `expr/` is self-contained apart from `MetricSeries`, so the DSL can be parsed,
   validated and replayed without a live run (this is what `et rules test` uses).
 
+`HistoryStore` has no dedicated `Run` back-reference and does not inspect its
+backends, alert registry, or Python summary implementation. Run owns that policy and
+registers a capability provider alongside its commit callback. After flush and
+cache-budget enforcement, history asks the provider for an eligible native
+summary handle. An unavailable capability, changed callback, or store/series hook
+selects ordered notification delivery. The provider is evaluated each time,
+not cached across flushes, and registration is cleared on reinitialization.
+Bound callbacks/providers can still retain their owner; this is a dependency
+boundary change, not elimination of all object-reference cycles.
+
+Observed Run commits build one independent shallow metrics snapshot shared by
+the summary callback and backends; alerts retain the complete committed row.
+Standard dictionaries with exact UTF-8 string keys are filtered in one native
+pass, avoiding Python dispatch for every field. Dictionary/string subclasses
+and surrogate keys retain the original Python projection, including their
+`items`/`startswith` hooks and iteration errors. This does not eliminate the
+snapshot, merge series/summary passes, cache projections across callbacks, or
+change backend mutation visibility.
+
+Some apparently repeated observer work belongs to distinct compatibility
+boundaries. Summary observation is also a standalone mapping API and filters
+hidden/non-string keys while respecting pinned keys; arbitrary key comparisons
+can reenter the SDK. Series accepts standalone records and numeric subclasses,
+so only unexposed validated native records may bypass its eligibility scan.
+Removing those generic checks merely because ordinary Run input was normalized
+would change supported behavior. Likewise, per-record notification completion
+state is distinct from the producer's batch-tail ticket: recursive drains capture
+the current queued tail, which can be an intermediate record from that batch.
+Sharing one completion flag across the batch would lose that boundary. Further
+fusion needs evidence beyond fewer loops or wrappers, without invoking arbitrary
+Python callbacks while holding native state locks.
+
 ## Write path
 
 ```
 et.log(data, step, commit)
         │
         ▼
-Run.log ──> Summary.observe(data)          # last value per metric
-        └──> HistoryStore.log
-                 │  encode once (jsonable_encoder)
-                 │  merge into the open row for the current step
+Run.log ──> HistoryStore.log
+                 │  exact builtin scalars: typed native ingestion
+                 │  custom/nested values: SDK normalization
+                 │  NativeHistoryState merges into the open row
                  ▼  commit when the step advances / commit=True / finish / flush(commit_open=True)
-             HistoryStore._emit
-                 ├── _store_row(record, line)         (holds the store lock)
-                 │      ├── cache.append((row, step, line))  # ordinal allocated here
-                 │      ├── MetricSeries.add(...)            # feeds alert evaluation
-                 │      └── JsonlWriter.enqueue(step, row, line)
-                 ├── writer.flush() / schedule_timer  (outside the lock)
-                 ├── _evict()
-                 └── _notify(record)                  # screen + alert engine
+             native admission + cache/ordinal allocation
+                 ├── NativeWriter queues and persists the encoded row
+                 ├── unobserved local commits: native series + summary
+                 └── observed commits: ordered NativeCommitQueue ticket
                  │
                  ▼
-             on_commit ──> AlertEngine.on_step(record) ──> Dispatcher (async)
-        └──> other backends (wandb, trackio, custom)
+             SDK ticket delivery outside native state locks
+                 ├── native series + summary + rule evaluation
+                 └── Dispatcher / other backends (wandb, trackio, custom)
 ```
 
 The ordinal allocation and the writer enqueue happen under one lock so that
 row ordinal *N* is always physical line *N*; the query planner depends on it.
 
 `HistoryStore.log` returns the `_step` the metrics landed on, or `None` when the call
-was rejected. `Run.log` forwards that resolved step (and the resolved commit flag) to
-the remote backends, so a backend's row layout matches the local history instead of
-drifting on its own counter — two `log()` calls for one step stay one step everywhere.
-Test the result with `is None`, since step 0 is falsy.
+was rejected. Run's commit callback forwards the complete committed metrics and
+their actual step to remote backends, so a backend's row layout matches local
+history instead of drifting on its own counter. Test the history result with
+`is None`, since step 0 is falsy.
 
-`log()` never branches on the open row directly: `_switch_open_row(step)` points it
-at the requested step (or reuses it when no step is given) and hands back whatever row
-that displaced. `JsonlWriter._track_line` is likewise the single place that folds a line
-into the counters and index, shared by live appends and by resume rescans — so the
-two can never drift apart.
+Open-row transitions, row admission, cache eviction and writer accounting are
+native operations. Live appends and resume use the same native accounting rules,
+so metadata and sparse indexes do not drift between those paths.
+
+Ordinary scalar logs bypass Python JSON encoding. Fresh committed rows serialize
+directly into one owned `Vec<u8>`, using a bounded cache of escaped metric keys;
+they do not construct per-value JSON strings or intermediate row tables. Each
+fresh scalar metric probes that cache once: hits borrow encoded keys, misses
+populate it only below the 4,096-key bound, and uncached keys beyond that bound
+serialize directly into the output vector without another key buffer. Partial
+rows, reductions and compatibility inputs retain the indexed native object
+representation. A shallow dictionary snapshot freezes inputs before releasing
+the GIL. Exact loaded NumPy `float64` scalars are converted to builtin floats in
+that snapshot without importing NumPy or changing the caller's dictionary.
+
+Fresh scalar records retain their validation result and whether numeric
+publication can proceed without overflow fallback. Inline publication reuses
+that result rather than rescanning the row for publication/series eligibility.
+General records keep ordinary validation. The internal Python-accessible
+`NativeRecord.dictionary()` accessor invalidates the result before exposing its
+mutable snapshot; the native publisher uses a separate unexposed accessor.
+Huge integers still select ordered fallback before any observer is updated.
+
+The encoded vector is moved into `Arc<Vec<u8>>` without copying its payload.
+The record, cache and writer queue share this allocation. Normal flushes pass
+borrowed `IoSlice` descriptors to vectored file writes, grouped by rotation
+segment; no concatenated batch buffer is constructed. Partial writes and
+interruptions advance those descriptors, with errors going through the existing
+rollback/retry path. Python writer hooks retain compatibility batching; external
+multiline/split payloads also use it when rotation needs newline-aware grouping.
+
+This is **zero additional user-space payload copies after serialization** in
+the ordinary native write path, not end-to-end zero-copy. Python references are
+snapshotted, JSON bytes must be encoded, and ordinary file I/O copies bytes into
+the kernel. Series still store numeric values, while summary retains Python
+object references. Per-metric `VecDeque` windows avoid moving retained samples
+at trimming boundaries and share each record's step/time metadata; point storage
+is 16 rather than 32 bytes on 64-bit targets. Trimming before insertion avoids
+the old temporary capacity doubling. Sparse metrics and later capacity growth
+retain the previous last-N/hidden-retention semantics.
+
+Validated series updates probe the bounded ASCII-key cache once on a hit and
+borrow its existing string. Cacheable misses use an entry insertion without an
+extra string clone; after 4,096 names, misses still use a temporary encoding.
+Insertion remains before numeric conversion, preserving cache and prior-point
+state when conversion raises. Clearing points/warnings keeps the bounded key
+cache, as before. This removes hash probes, not snapshots or payload copies.
+
+Typed admission and inline publication have separate eligibility checks.
+Backends, active alert rules and custom callbacks can use native scalar admission
+without bypassing ordered notification delivery or publishing series/summary
+early. The fused local publisher remains enabled only while the notification
+queue is idle and the standard series/summary observers are unchanged. Eligibility
+is checked again after flushing, so observers installed during a flush receive
+that same commit. Overridden admission hooks and unsupported values retain their
+compatibility path. Empty alert registries return before extracting metric keys.
+Neither path disables series, summary, rotation or cache backpressure.
+
+`_log_local` is the local commit coordinator. The typed native prepare result is
+unpacked once into explicit step, accepted-record, flush-due, cache-budget,
+diagnostic and warning variables without allocating another result wrapper.
+The coordinator reports the outcome, schedules persistence/eviction, then
+attempts inline publication or stages notifications. Both native and
+compatibility admissions share `_schedule_commit` and `_stage_notification`.
+These are explicit phases of the existing write transaction, not a new lock or
+worker: scheduling can release the GIL, so publication capability is resolved
+afterward; ordered delivery still happens outside the transaction/state locks.
+The low-level native ABI tuple remains unchanged.
+
+The [100-metric investigation](benchmarks/native-migration.md#hundred-metric-data-path-investigation)
+describes the earlier transport's copies and profiles its observed/NumPy paths;
+the transport follow-up measures these changes against that exact native build.
 
 ## Read path
 
@@ -94,31 +252,24 @@ two can never drift apart.
 et.history(n, ...)
         │
         ▼
-HistoryStore.get ──> _collect ──> _collect_tail | _collect_range
-        │                 │              │
-        │                 │              ├─ _view_*   one lock: cache rows + boundary
-        │                 │              └─ _older_*  only when the view is incomplete
-        │                 ├─ _open_rows   the uncommitted row, if wanted and in range
-        │                 └─ _take_steps  merge by step, keep the newest n
+HistoryStore.get ──> NativeHistoryState cache snapshot/query planning
+        │                 ├─ NativeReader disk fallback when cache is incomplete
+        │                 ├─ include the open row, if requested and in range
+        │                 └─ native patch merge and step selection
         ▼
-frame.project(...)  ──>  frame.to_output(dict | pandas | polars)
+batched JSON decode + owned projection ──> frame.to_output(dict | pandas | polars)
 ```
 
-Both query kinds share one shape: take a `_CacheView` under a single lock, and touch
-the disk only when the view reports it cannot answer on its own.
+Both query kinds capture cache rows and their disk boundary together, and only
+touch disk when the native snapshot cannot answer completely. Tail/range scans,
+step selection and patch merging execute in Rust.
 
-```python
-view = self._view_tail(steps)          # or _view_range(step_range)
-records = view.records()
-if view.complete:
-    return records
-return self._older_tail(view, steps, records) + records
-```
-
-`_CacheView.complete` folds together the three reasons the disk can be skipped: the
-cache holds an older step, nothing was ever evicted, or there is no writer. The
-scans themselves (`_scan_tail`, `_scan_range`, `_nearer_front`, `_newest_steps`) are
-plain functions over a sequence, so they hold no lock and are tested directly.
+Unmerged disk queries validate the complete JSON grammar and step before
+forwarding original row bytes; they do not parse and re-encode every value.
+Python materialization decodes bounded batches of up to 1,024 rows and projects
+freshly owned snapshots without copying each dictionary again. Corrupt batches
+fall back to individual decoding with explicit warnings; extended numbers,
+duplicate keys, surrogate escapes and query boundaries retain their semantics.
 
 `et.history(run=...)` bypasses the store entirely and reads through `JsonlReader`
 (`read_history`), which is what makes offline analysis and `et rules test` possible.
@@ -149,7 +300,8 @@ The two are kept strictly separate in the read path:
   the most recently written **steps** and merges all their patches. Unique-step
   files use reverse reads; arbitrary patch histories require scanning older data.
 * `HistoryStore._collect_tail(steps)` works in rows, then `_take_steps` merges and
-  trims by *step*, so `get(n)` never returns a half-merged oldest row.
+  trims by *step* through native helpers, so `get(n)` never returns a half-merged
+  oldest row.
 * The cache stores each row's step next to its bytes, so `_view_tail` snapshots the
   exact rows covering *n* steps without parsing any JSON, and stops as soon as one
   older step proves nothing is truncated.
@@ -173,16 +325,12 @@ Disk fallback only happens once rows have been evicted or the run was resumed;
 
 | Lock / thread | Owner | Protects |
 | --- | --- | --- |
-| `HistoryStore._lifecycle_lock` | store | reinitialization and shutdown |
-| `HistoryStore._write_lock` (RLock) | store | accepted write transactions and row admission |
-| `HistoryStore._lock` (RLock) | store | open row, cache, series and row ordinal |
-| notification condition | store | ordered commit tickets, delivery ownership and completion |
-| `JsonlWriter._lock` (RLock) | writer | buffer, index, meta fields |
-| `JsonlWriter._write_lock` | writer | batch swap + file append (ordering) |
-| reusable writer worker | writer | asynchronous span writes and timed buffer flushing; drained at shutdown |
-| `CompiledRule.lock` | engine | one rule's state machine transitions |
-| dispatch worker thread | dispatcher | drains the send queue; drained at exit |
-| watchdog thread | engine | evaluates time-based rules when no logs arrive |
+| SDK lifecycle/write coordination | Python adapters | reinitialization, shutdown, admission and callback ordering |
+| Native history/writer state locks | Rust | open row, cache, ordinal, buffer, index/meta and file append |
+| Native commit queue/tickets | Rust | ordered delivery ownership and completion |
+| SDK rule callback coordination | Python adapters | serialization across native transitions and reentrant callbacks |
+| Native alert/channel state | Rust | deadlines, queue/rate limits, retries, dedup and rule state |
+| Background worker lifecycle | native core + SDK adapters | scheduled flush/watchdog/dispatch work and shutdown draining |
 
 Store writes enter the transaction lock before the store-state lock. Shutdown
 rejects new writes, waits for accepted metric/span transactions, then flushes and
@@ -201,6 +349,19 @@ recursive logging/flush, while lifecycle operations are rejected inside callback
 Reinitialization drains the old run's notifications before replacing its metadata.
 Alert-series updates occur during ordered delivery, not admission, preventing
 queued future rows from changing an earlier notification's scalar/window results.
+Native state locks are released before invoking Python user/backend callbacks.
+
+Notification coordination has one owner: `NativeCommitQueue` owns its condition
+variable, delivery owner/depth and per-row completion. The SDK stages each batch
+with its options, callback and ContextVar context, then receives only the last
+row's completion ticket. It does not allocate a Python ticket for every row or
+maintain a second notification condition/completion flag. The internal queue
+protocol is `enqueue(batch) -> last_ticket | None` and
+`drain(owner, callback, target=None)`. Recursive drains capture their queued tail
+inside the native queue; they do not wait for an active callback ancestor or
+consume later admissions past that boundary. Native completion still advances
+when a callback raises. Tests observe native queue state without adding SDK
+synchronization solely for instrumentation.
 
 Run/store/span/plugin objects are process-owned. Fork resets process-global
 locks and the active run/stack in the child; inherited objects are rejected before
@@ -211,12 +372,46 @@ acquiring their locks, and inherited exit hooks do not flush parent data.
 | I want to add... | Where it goes |
 | --- | --- |
 | a notification channel | subclass `AlertBackend`, call `register_backend("type", cls)` |
-| an expression function | add to `expr/functions.py` (`WINDOW_FUNCS` / `SCALAR_FUNCS` / `SPECIAL_FUNCS`) |
+| an expression function | update the public DSL metadata and matching native evaluator/compiled plan |
 | an output format | add a branch in `history/frame.to_output` |
 | a metrics backend | pass any object with `init/log/finish` in `backends=[...]` |
-| an artifact storage mode | extend `ArtifactStore._materialise` (default is `copy`: `link` shares the caller's inode) |
+| an artifact storage mode | extend native artifact materialization and its SDK adapter (`copy` is default; `link` shares the caller's inode) |
 | a value type to encode | extend `history/codec.py` (and `encoders.py` for the coercion) |
 | a history tunable | add a field to `HistoryOptions`; it is validated and documented automatically |
+
+## Local viewer
+
+`et serve` scans the selected root and serves only discovered metric/span sources.
+The CLI root is the initial location. The directory picker can browse any
+server-readable directory; canonical selected roots travel with each request,
+so one page never changes another page's root. Run IDs identify absolute
+directories. The discovery cache retains only the most recent scan; requests
+that miss it use their own discovery result, not a concurrently replaced cache.
+Log sources and rotation segments remain contained within the request's root.
+It reads the same retained JSONL segments as the SDK. A bounded cache of temporary
+SQLite indexes merges metric patches and supports pagination/downsampling;
+these indexes are disposable and never replace or modify experiment logs.
+
+The registry is bounded to 32 indexes. A shared registry guard pins their lifetime
+during queries, while each log has its own refresh/query mutex: already cached
+independent logs can progress concurrently, but queries of the same log remain
+exclusive. Creating, pruning or evicting an index requires an exclusive registry
+guard and waits for active queries; queued registry writers can also delay new
+readers. A refresh failure immediately drops the invalid index, and the next
+registry write prunes its empty slot before applying the capacity policy.
+Query errors retain healthy indexes. No index leases or background pool are
+needed, but concurrent query working sets can increase memory use.
+
+Chart downsampling bounds returned points, not work: selected rows still need
+scanning/parsing. This ownership change does not make large chart queries
+constant-time or parallelize cold index creation.
+
+Only complete records are visible, so buffered/open training rows appear after
+they are flushed. Large integers and Python's legacy nonfinite values are encoded
+explicitly at the browser boundary instead of silently losing precision. The
+server binds only to loopback and checks Host/Origin; remote access uses SSH
+forwarding. See [Web viewer](guide/web-viewer.md) and
+[native development](native-development.md).
 
 ## Configuration
 

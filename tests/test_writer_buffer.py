@@ -17,9 +17,7 @@ def count_lines(path):
 
 def make(tmp_path, name, **kwargs):
     store = HistoryStore()
-    store.init(
-        project="p", name=name, dir=str(tmp_path), **kwargs
-    )
+    store.init(project="p", name=name, dir=str(tmp_path), **kwargs)
     return store
 
 
@@ -60,6 +58,34 @@ def test_timer_flushes_stale_records(tmp_path):
     assert count_lines(s.log_fp) == 5
     assert s.writer.buffer == []
     s.finish()
+
+
+def test_sync_failure_starts_deadline_retry_worker(tmp_path, monkeypatch):
+    writer = JsonlWriter(
+        tmp_path / "metrics.jsonl", buffer_size=1, max_buffer_seconds=0.02
+    )
+    completed = threading.Event()
+    original = writer._write
+    attempts = 0
+
+    def write(payload):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("first write failed")
+        original(payload)
+        completed.set()
+
+    monkeypatch.setattr(writer, "_write", write)
+    try:
+        writer.append(0, 0, b'{"_step": 0}\n')
+        assert completed.wait(3), "a synchronous failed flush never retried"
+        writer.flush()
+        assert attempts == 2
+        assert writer.reader().read_all() == [{"_step": 0}]
+        assert writer.pending_bytes == writer.dropped == 0
+    finally:
+        writer.close()
 
 
 def test_concurrent_logging_does_not_lose_records(tmp_path):

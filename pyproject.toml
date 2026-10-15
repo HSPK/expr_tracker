@@ -1,5 +1,6 @@
 [project]
 name = "expr_tracker"
+version = "0.4.1"
 description = "Local-first experiment tracking with queryable history and expression-based alerts on your training metrics"
 readme = "README.md"
 license = "MIT"
@@ -38,8 +39,6 @@ dependencies = [
     "python-dotenv>=1.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
-
-dynamic = ["version"]
 
 [project.optional-dependencies]
 # Local-first by default: remote backends and rich frames are opt-in.
@@ -83,11 +82,40 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling", "uv-dynamic-versioning"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.12,<2"]
+build-backend = "maturin"
 
-[tool.hatch.version]
-source = "uv-dynamic-versioning"
+[tool.maturin]
+manifest-path = "Cargo.toml"
+python-source = "src"
+module-name = "expr_tracker._native"
+features = ["extension-module"]
+profile = "release"
+include = [
+    { path = "src/expr_tracker/_web/**/*", format = ["wheel", "sdist"] },
+    { path = "web/package.json", format = "sdist" },
+    { path = "web/package-lock.json", format = "sdist" },
+    { path = "web/index.html", format = "sdist" },
+    { path = "web/tsconfig.json", format = "sdist" },
+    { path = "web/vite.config.ts", format = "sdist" },
+    { path = "web/vitest.config.ts", format = "sdist" },
+    { path = "web/playwright.config.ts", format = "sdist" },
+    { path = "web/src/**/*", format = "sdist" },
+    { path = "web/e2e/**/*", format = "sdist" },
+    { path = "rust/**/*", format = "sdist" },
+    { path = "Cargo.lock", format = "sdist" },
+    { path = "benchmarks/*.py", format = "sdist" },
+]
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "rust/**/*.rs" },
+    { file = "src/expr_tracker/**/*.py" },
+    { file = "src/expr_tracker/_web/**/*" },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

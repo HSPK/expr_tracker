@@ -4,8 +4,8 @@ These are the features the coverage report showed as untested rather than merely
 under-covered.
 """
 
+import errno
 import json
-import os
 import sys
 
 import pytest
@@ -62,10 +62,7 @@ def test_link_shares_the_inode_with_the_source(artifacts, payload):
 
 
 def test_link_falls_back_to_copy_when_linking_fails(artifacts, payload, monkeypatch):
-    def refuse(source, destination):
-        raise OSError("cross-device link")
-
-    monkeypatch.setattr(os, "link", refuse)
+    monkeypatch.setattr(artifacts, "_link_errno", errno.EXDEV, raising=False)
     stored = logged(artifacts, payload, mode="link")
     assert (stored.dir / "model.bin").read_bytes() == b"weights"
     assert (stored.dir / "model.bin").stat().st_ino != (
@@ -139,7 +136,9 @@ def test_materialising_twice_does_not_duplicate_work(artifacts, payload):
     stored = logged(artifacts, payload)
     marker = stored.dir / "model.bin"
     marker.write_bytes(b"tampered")
-    artifacts._materialise(stored, "copy")  # existing files are left alone
+    repeated = logged(artifacts, payload, mode="copy")
+    assert repeated.version == stored.version
+    assert len(artifacts.entries()) == 1
     assert marker.read_bytes() == b"tampered"
 
 

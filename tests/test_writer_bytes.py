@@ -36,7 +36,10 @@ def assert_bytes(instance, queued, inflight):
         assert instance.inflight_bytes == inflight
         assert instance.pending_bytes == queued + inflight
         assert sum(len(line) for _, _, line in instance.buffer) == queued
-        assert len(instance.buffer) + instance._inflight_records <= instance.max_pending_records
+        assert (
+            len(instance.buffer) + instance._inflight_records
+            <= instance.max_pending_records
+        )
         if instance.max_pending_bytes is not None:
             assert instance.pending_bytes <= instance.max_pending_bytes
 
@@ -57,7 +60,9 @@ def writer(tmp_path):
         instance.close()
 
 
-def test_byte_defaults_and_enqueue_status_preserve_flush_due_contract(writer, monkeypatch):
+def test_byte_defaults_and_enqueue_status_preserve_flush_due_contract(
+    writer, monkeypatch
+):
     default = writer()
     assert default.max_pending_bytes == DEFAULT_MAX_PENDING_BYTES == 64 * 1024 * 1024
     assert default.max_record_bytes == DEFAULT_MAX_RECORD_BYTES == 8 * 1024 * 1024
@@ -88,7 +93,9 @@ def test_byte_defaults_and_enqueue_status_preserve_flush_due_contract(writer, mo
 
 
 @pytest.mark.parametrize("name", ["max_pending_bytes", "max_record_bytes"])
-@pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "1024", float("inf"), float("nan")])
+@pytest.mark.parametrize(
+    "value", [0, -1, True, False, 1.5, "1024", float("inf"), float("nan")]
+)
 def test_byte_limits_require_positive_integers_or_none(tmp_path, name, value):
     path = tmp_path / "not-created" / "records.jsonl"
     with pytest.raises(ValueError, match=f"{name} must be a positive integer or None"):
@@ -142,7 +149,9 @@ def test_oversize_rejection_never_waits_even_at_capacity(
 
 
 @pytest.mark.parametrize("async_write", [False, True])
-def test_mixed_sizes_wait_for_queued_and_inflight_bytes(writer, monkeypatch, async_write):
+def test_mixed_sizes_wait_for_queued_and_inflight_bytes(
+    writer, monkeypatch, async_write
+):
     instance = writer(
         buffer_size=50,
         max_pending_bytes=256,
@@ -210,7 +219,9 @@ def test_mixed_sizes_wait_for_queued_and_inflight_bytes(writer, monkeypatch, asy
     assert_bytes(instance, 0, 0)
 
 
-def test_partial_failure_requeues_bytes_and_wakes_waiters_to_drop_oldest(writer, monkeypatch):
+def test_partial_failure_requeues_bytes_and_wakes_waiters_to_drop_oldest(
+    writer, monkeypatch
+):
     instance = writer(
         buffer_size=2,
         max_pending_bytes=256,
@@ -266,7 +277,10 @@ def test_partial_failure_requeues_bytes_and_wakes_waiters_to_drop_oldest(writer,
     assert instance.enqueue_with_status(5, 5, line_for(5, 96)) == (True, True)
     assert [row for _, row, _ in instance.buffer] == [4, 5]
     assert instance.dropped == 4 and instance.dropped_bytes == 256
-    assert sum("dropped 2 oldest queued records (128 bytes)" in error for error in errors) == 2
+    assert (
+        sum("dropped 2 oldest queued records (128 bytes)" in error for error in errors)
+        == 2
+    )
     assert_bytes(instance, 224, 0)
     monkeypatch.setattr(instance, "_write", original_write)
     instance.close()
@@ -320,7 +334,9 @@ def test_failure_overflow_cannot_evict_inflight_bytes(writer, monkeypatch, retry
     assert not flusher.is_alive()
     assert_bytes(instance, 256 if retry_fails else 96, 0)
     assert instance.flushed_row == (-1 if retry_fails else 0)
-    assert any("dropped 2 oldest queued records (192 bytes)" in error for error in errors)
+    assert any(
+        "dropped 2 oldest queued records (192 bytes)" in error for error in errors
+    )
     monkeypatch.setattr(instance, "_write", original_write)
     instance.close()
     assert steps_on_disk(instance) == [0, 4]
@@ -359,7 +375,9 @@ def test_failure_overflow_enforces_count_and_byte_caps_together(writer, monkeypa
     assert_bytes(instance, 48, 0)
     assert instance.dropped == 5 and instance.dropped_bytes == 256
     assert [row for _, row, _ in instance.buffer] == [5, 6, 7]
-    assert any("dropped 2 oldest queued records (64 bytes)" in error for error in errors)
+    assert any(
+        "dropped 2 oldest queued records (64 bytes)" in error for error in errors
+    )
     monkeypatch.setattr(instance, "_write", original_write)
     instance.close()
     assert steps_on_disk(instance) == [5, 6, 7]
@@ -472,7 +490,10 @@ def test_close_wakes_byte_waiters_and_accounts_for_failed_final_flush(
     assert_bytes(instance, 256 if final_failure else 0, 0)
     if final_failure:
         assert instance.flushed_row == -1
-        assert any("2 unwritten records" in error and "(256 bytes)" in error for error in errors)
+        assert any(
+            "2 unwritten records" in error and "(256 bytes)" in error
+            for error in errors
+        )
     else:
         assert steps_on_disk(instance) == [0, 1]
         assert instance.flushed_row == 1
@@ -481,7 +502,9 @@ def test_close_wakes_byte_waiters_and_accounts_for_failed_final_flush(
     assert_bytes(instance, 256 if final_failure else 0, 0)
 
 
-def test_repeated_batches_and_partial_retries_do_not_leak_byte_accounting(writer, monkeypatch):
+def test_repeated_batches_and_partial_retries_do_not_leak_byte_accounting(
+    writer, monkeypatch
+):
     instance = writer(max_pending_bytes=8192, max_record_bytes=512, index_every=3)
     original_write = instance._write
     fail_next = False
@@ -557,8 +580,9 @@ def test_failure_overflow_bookkeeping_scales_linearly(writer, monkeypatch):
             for row in range(capacity, capacity + 40_000):
                 instance.enqueue(row, row, line)
             samples.append(time.perf_counter() - start)
-            # One len() for admission, one for each evicted record: no queue scans.
-            assert MeasuredBytes.calls == 80_000
+            # Native byte vectors retain their lengths; no Python queue scans or
+            # repeated __len__ calls are needed for admission/eviction.
+            assert MeasuredBytes.calls == 0
             assert instance.pending_bytes == capacity * 32
             assert instance.dropped == 40_000
             instance.close()
@@ -567,7 +591,7 @@ def test_failure_overflow_bookkeeping_scales_linearly(writer, monkeypatch):
     print(
         f"\n40,000 overflow admissions: capacity=1,000 {timings[1000]:.4f}s; "
         f"capacity=30,000 {timings[30_000]:.4f}s; ratio={ratio:.2f}; "
-        "exactly 80,000 length calls per run"
+        "no Python length calls per run"
     )
     assert ratio < 4
 

@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from ._native import NativeSpan
 from ._process import check_process, process_id, register_fork_reset
+
+_NATIVE_SPAN = NativeSpan
 
 if TYPE_CHECKING:
     from .history.store import Reduction
@@ -116,6 +119,7 @@ class Span:
 
     __slots__ = (
         "_ended",
+        "_native",
         "_owner_pid",
         "_store",
         "_token",
@@ -144,8 +148,9 @@ class Span:
         **attributes: Any,
     ):
         self._owner_pid = process_id()
+        self._native = None
         self.name = str(name).strip("/") or "span"
-        self.attributes = dict(attributes)
+        self.attributes = attributes
         self._store = store
         self.print_fn = print_fn
         self.plugins = tuple(plugins)
@@ -165,6 +170,8 @@ class Span:
 
     def begin(self) -> Span:
         check_process(self._owner_pid)
+        if self.started_at != 0.0:
+            raise RuntimeError("A span cannot be begun more than once")
         parent = current_span()
         self.path = f"{parent.path}/{self.name}" if parent else self.name
         self.depth = parent.depth + 1 if parent else 0
@@ -180,8 +187,16 @@ class Span:
             self.plugins = parent.plugins
         for plugin in self.plugins:
             _safely(plugin, "start", self)
-        self.started_at = time.time()
-        self.start = time.perf_counter()
+        if self._native is None and NativeSpan is _NATIVE_SPAN:
+            self.started_at = time.time()
+            self.start = time.perf_counter()
+            self._native = NativeSpan(
+                started_at=self.started_at, clock_start=self.start
+            )
+        else:
+            if self._native is None:
+                self._native = NativeSpan()
+            self.started_at, self.start = self._native.begin(time.perf_counter())
         self._token = _STACK.set((*_STACK.get(), self))
         self._announce("->", None)
         return self
@@ -189,11 +204,14 @@ class Span:
     def end(self, error: BaseException | None = None) -> float:
         """Close the span and record it. Returns the duration in milliseconds."""
         check_process(self._owner_pid)
-        if self._ended or self.started_at == 0.0:
+        if self._native is None:
+            return self.duration_ms
+        closed, duration = self._native.end()
+        if not closed:
             # Never begun: there is no duration to report and nothing to record
             return self.duration_ms
         self._ended = True
-        self.duration_ms = (time.perf_counter() - self.start) * 1000.0
+        self.duration_ms = duration
         if error is not None:
             self.error = type(error).__name__
         for plugin in self.plugins:
@@ -205,7 +223,12 @@ class Span:
             # the whole stack as it was, so a span ended out of order would
             # resurrect spans that already closed underneath it.
             self._token = None
-            _STACK.set(tuple(s for s in _STACK.get() if s is not self))
+            stack = _STACK.get()
+            _STACK.set(
+                stack[:-1]
+                if stack and stack[-1] is self
+                else tuple(s for s in stack if s is not self)
+            )
         self._record()
         self._announce("<-", self.duration_ms)
         return self.duration_ms
@@ -275,39 +298,29 @@ class Span:
     def _record(self):
         if self._store is None:
             return
-        metrics = {}
-        reductions = {}
-        if self._store.options.span_metrics:
-            metrics = {
-                span_metric(TIME_METRIC, self.path): self.duration_ms,
-                **{
-                    span_metric(key, self.path): value
-                    for key, value in self.metrics.items()
-                },
-            }
-            if self._store.options.span_count:
-                metrics[span_metric(COUNT_METRIC, self.path)] = 1
-            reductions = {
-                span_metric(key, self.path): SPAN_REDUCTIONS[key]
-                for key in self.metrics
-                if key in SPAN_REDUCTIONS
-            }
-        record = {
-            "name": self.path,
-            "depth": self.depth,
-            "track": self.track,
-            "start": self.started_at,
-            "dur_ms": self.duration_ms,
-        }
-        if self.metrics:
-            record["metrics"] = self.metrics
-        if self.error:
-            record["error"] = self.error
         try:
+            attributes = {}
             if self.attributes and self._store.options.spans:
-                record["args"] = self._store._encode_span_data(
+                attributes = self._store._encode_span_data(
                     self.attributes, kind="span attributes"
                 )
+            if (
+                not self.metrics
+                and not attributes
+                and "record_span" not in self._store.__dict__
+                and self._store._record_span_native(self)
+            ):
+                return
+            metrics, record, reductions = self._native.record(
+                self.path,
+                self.depth,
+                self.track,
+                self.metrics,
+                attributes,
+                self.error,
+                self._store.options.span_metrics,
+                self._store.options.span_count,
+            )
             self._store.record_span(
                 metrics, record, reductions=reductions, weight=self.duration_ms
             )
@@ -338,11 +351,10 @@ def start_span(
         # The span's own arguments win over the run-wide defaults
         print_fn = print_fn if print_fn is not None else store.options.span_print_fn
         plugins = plugins or store.options.span_plugins
-    options = {"print_fn": print_fn, "plugins": plugins, **attributes}
     span = (
-        Span(name, store, **options)
+        Span(name, store, print_fn=print_fn, plugins=plugins, **attributes)
         if store is not None
-        else _NullSpan(name, **options)
+        else _NullSpan(name, print_fn=print_fn, plugins=plugins, **attributes)
     )
     return span.begin()
 
@@ -363,7 +375,7 @@ class span:
     ```
 
     Nested names join with ``/``, so the duration lands on the metric
-    ``forward/attention/duration_ms`` and window functions work on it directly.
+    ``time_ms/forward/attention`` and window functions work on it directly.
     """
 
     def __init__(
@@ -377,14 +389,21 @@ class span:
         self._name = name
         self._attributes = {"print_fn": print_fn, "plugins": plugins, **attributes}
         self._span: Span | None = None
+        self._active: ContextVar[tuple[Span, ...]] = ContextVar(
+            "et_span_context", default=()
+        )
 
     def __enter__(self) -> Span:
         self._span = start_span(self._name, **self._attributes)
+        self._active.set((*self._active.get(), self._span))
         return self._span
 
     def __exit__(self, kind, value, traceback) -> bool:
-        if self._span is not None:
-            self._span.end(value)
+        active = self._active.get()
+        if active:
+            self._active.set(active[:-1])
+            active[-1].end(value)
+            self._span = active[-2] if len(active) > 1 else None
         return False
 
     async def __aenter__(self) -> Span:

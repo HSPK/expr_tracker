@@ -84,7 +84,9 @@ def run_script(tmp_path, body, **variables):
 
 
 def test_two_writer_error_sink_stats_reentry(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         history = HistoryStore().init(
             project="p", name="r", dir=str(root), max_record_bytes=64
         )
@@ -118,12 +120,15 @@ def test_two_writer_error_sink_stats_reentry(tmp_path):
         assert history.writer.dropped_bytes == history.span_writer.dropped_bytes == 128
         assert all(item["pending_bytes"] == item["span_pending_bytes"] == 0 for item in seen)
         history.finish()
-    """)
+    """,
+    )
 
 
 @pytest.mark.parametrize("rejection", ["oversized", "closed"])
 def test_rejection_sink_can_read_and_flush_same_writer(tmp_path, rejection):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_record_bytes=64)
         writer.enqueue(0, 0, line(0))
         if rejection == "closed":
@@ -144,11 +149,15 @@ def test_rejection_sink_can_read_and_flush_same_writer(tmp_path, rejection):
         assert writer.enqueue_with_status(1, 1, line(1, 128)) == (False, False)
         assert seen == ["ERROR" if rejection == "oversized" else "WARNING"]
         writer.close()
-    """, rejection=rejection)
+    """,
+        rejection=rejection,
+    )
 
 
 def test_failed_write_sink_sees_rollback_and_requeued_bytes_before_retry(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_buffer_seconds=None)
         original_write = writer._write
         observed = []
@@ -180,13 +189,16 @@ def test_failed_write_sink_sees_rollback_and_requeued_bytes_before_retry(tmp_pat
         assert len(observed) == 1 and "partial write" in observed[0]
         writer.close()
         assert writer.reader().read_all() == [{"_step": 0}, {"_step": 1}]
-    """)
+    """,
+    )
 
 
 def test_rollback_warning_follows_consistent_failure_accounting(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_buffer_seconds=None)
-        original_write, original_truncate = writer._write, os.truncate
+        original_write, original_truncate = writer._write, writer._truncate_partial_write
         observed = []
 
         def fail(payload):
@@ -206,21 +218,24 @@ def test_rollback_warning_follows_consistent_failure_accounting(tmp_path):
             assert writer.reader().merge
             observed.append((message.record["level"].name, message.record["message"]))
 
-        writer._write, os.truncate = fail, cannot_truncate
+        writer._write, writer._truncate_partial_write = fail, cannot_truncate
         add_sink(sink, level="WARNING")
         writer.enqueue(0, 0, line(0))
         writer.flush()
         assert [level for level, _ in observed] == ["ERROR", "WARNING"]
         assert "flush failed" in observed[0][1]
         assert "rollback failed" in observed[1][1]
-        writer._write, os.truncate = original_write, original_truncate
+        writer._write, writer._truncate_partial_write = original_write, original_truncate
         writer.close()
         assert writer.reader().read_all() == [{"_step": 0}]
-    """)
+    """,
+    )
 
 
 def test_failure_overflow_sink_runs_after_admission_is_complete(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(
             root / "metrics.jsonl", max_pending_bytes=64, max_buffer_seconds=None
         )
@@ -250,11 +265,16 @@ def test_failure_overflow_sink_runs_after_admission_is_complete(tmp_path):
         assert len(seen) == 1 and "dropped 1 oldest queued records (32 bytes)" in seen[0]
         writer.close()
         assert writer.reader().read_all() == [{"_step": 1}, {"_step": 2}]
-    """)
+    """,
+    )
 
 
-def test_inflight_overflow_sink_can_wait_for_flush_without_holding_buffer_lock(tmp_path):
-    run_script(tmp_path, """
+def test_inflight_overflow_sink_can_wait_for_flush_without_holding_buffer_lock(
+    tmp_path,
+):
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(
             root / "metrics.jsonl", max_pending_bytes=64, max_buffer_seconds=None
         )
@@ -291,12 +311,15 @@ def test_inflight_overflow_sink_can_wait_for_flush_without_holding_buffer_lock(t
         assert len(seen) == 1 and "(32 bytes)" in seen[0]
         writer.close()
         assert writer.reader().read_all() == [{"_step": 0}]
-    """)
+    """,
+    )
 
 
 @pytest.mark.parametrize("operation", ["flush", "close", "save"])
 def test_metadata_warning_sink_runs_outside_nested_locks(tmp_path, operation):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_buffer_seconds=None)
         writer.meta_path = root / "missing" / "metrics.meta.json"
         if operation != "save":
@@ -323,11 +346,15 @@ def test_metadata_warning_sink_runs_outside_nested_locks(tmp_path, operation):
         logger.remove(handle)
         writer.meta_path.parent.mkdir()
         writer.close()
-    """, operation=operation)
+    """,
+        operation=operation,
+    )
 
 
 def test_final_close_diagnostics_observe_closed_state_and_allow_reentry(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_buffer_seconds=None)
         writer.meta_path = root / "missing" / "metrics.meta.json"
         seen = []
@@ -352,12 +379,17 @@ def test_final_close_diagnostics_observe_closed_state_and_allow_reentry(tmp_path
         assert "final flush failed" in seen[0][1]
         assert "Failed to write" in seen[1][1]
         assert "1 unwritten records" in seen[2][1] and "(32 bytes)" in seen[2][1]
-    """)
+    """,
+    )
 
 
 @pytest.mark.parametrize("already_closing", [False, True])
-def test_worker_sink_cannot_close_itself_or_wait_for_its_closer(tmp_path, already_closing):
-    run_script(tmp_path, """
+def test_worker_sink_cannot_close_itself_or_wait_for_its_closer(
+    tmp_path, already_closing
+):
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(
             root / "metrics.jsonl", async_write=True, max_buffer_seconds=30
         )
@@ -404,11 +436,15 @@ def test_worker_sink_cannot_close_itself_or_wait_for_its_closer(tmp_path, alread
         assert len(attempts) == 1
         assert writer._closed and not writer._worker.is_alive()
         assert writer.pending_bytes == 0 and writer.lines == 1
-    """, already_closing=already_closing)
+    """,
+        already_closing=already_closing,
+    )
 
 
 def test_sink_failure_is_nonfatal_and_does_not_replace_close_exception(tmp_path):
-    result = run_script(tmp_path, """
+    result = run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_record_bytes=64)
         writer.meta_path = root / "missing" / "metrics.meta.json"
 
@@ -431,14 +467,20 @@ def test_sink_failure_is_nonfatal_and_does_not_replace_close_exception(tmp_path)
         else:
             raise AssertionError("operation exception was swallowed")
         assert writer._closed
-    """)
+    """,
+    )
     assert "Rejected oversized record" in result.stderr
     assert "Failed to write" in result.stderr
-    assert result.stderr.count("Writer diagnostic sink failed: ValueError: sink exploded") == 2
+    assert (
+        result.stderr.count("Writer diagnostic sink failed: ValueError: sink exploded")
+        == 2
+    )
 
 
 def test_sink_cannot_join_another_worker_waiting_for_loguru(tmp_path):
-    run_script(tmp_path, """
+    run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_record_bytes=64)
         other = JsonlWriter(
             root / "spans.jsonl", async_write=True, max_buffer_seconds=30
@@ -483,11 +525,14 @@ def test_sink_cannot_join_another_worker_waiting_for_loguru(tmp_path):
         writer.close()
         other.close()
         assert other.lines == 1 and not other._worker.is_alive()
-    """)
+    """,
+    )
 
 
 def test_raising_sink_does_not_kill_worker_or_lose_retry_bytes(tmp_path):
-    result = run_script(tmp_path, """
+    result = run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(
             root / "metrics.jsonl", async_write=True, max_buffer_seconds=30
         )
@@ -513,13 +558,18 @@ def test_raising_sink_does_not_kill_worker_or_lose_retry_bytes(tmp_path):
         writer.close()
         assert writer.lines == 1 and writer.pending_bytes == 0
         assert not writer._worker.is_alive()
-    """)
+    """,
+    )
     assert "retryable write failure" in result.stderr
-    assert "Writer diagnostic sink failed: ValueError: worker sink failed" in result.stderr
+    assert (
+        "Writer diagnostic sink failed: ValueError: worker sink failed" in result.stderr
+    )
 
 
 def test_reentrant_diagnostics_use_stderr_without_recursive_sink_calls(tmp_path):
-    result = run_script(tmp_path, """
+    result = run_script(
+        tmp_path,
+        """
         writer = JsonlWriter(root / "metrics.jsonl", max_record_bytes=64)
         other = JsonlWriter(root / "spans.jsonl", max_record_bytes=64)
         seen = []
@@ -536,7 +586,8 @@ def test_reentrant_diagnostics_use_stderr_without_recursive_sink_calls(tmp_path)
         assert writer.dropped == 2 and other.dropped == 1
         writer.close()
         other.close()
-    """)
+    """,
+    )
     assert result.stderr.count("ERROR: Rejected oversized record") == 2
 
 

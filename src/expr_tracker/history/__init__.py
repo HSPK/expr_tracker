@@ -1,3 +1,5 @@
+"""Rust-backed local history with Python value and ecosystem adapters."""
+
 from .codec import RecordCodec
 from .frame import project, to_output
 from .naming import current_rank, metrics_filename, parse_stream, validate_stream

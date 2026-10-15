@@ -165,7 +165,7 @@ def test_a_rule_that_keeps_failing_is_disabled(run, monkeypatch):
     instance, received = run([{"condition": "loss > 1"}])
     compiled = next(iter(instance.alerts.rules.values()))
     monkeypatch.setattr(
-        "expr_tracker.alerts.engine.evaluate",
+        "expr_tracker.alerts.expr.EvalContext.resolve",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     for _ in range(5):
@@ -176,13 +176,13 @@ def test_a_rule_that_keeps_failing_is_disabled(run, monkeypatch):
 
 
 def test_a_transient_failure_does_not_disable_a_rule(run, monkeypatch):
-    from expr_tracker.alerts import engine as engine_module
+    from expr_tracker.alerts.expr import EvalContext
 
     instance, received = run(
         [{"condition": "loss > 1", "mode": "level", "cooldown": None}]
     )
     compiled = next(iter(instance.alerts.rules.values()))
-    real = engine_module.evaluate
+    real = EvalContext.resolve
     calls = {"n": 0}
 
     def flaky(*args, **kwargs):
@@ -191,7 +191,7 @@ def test_a_transient_failure_does_not_disable_a_rule(run, monkeypatch):
             raise RuntimeError("transient")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(engine_module, "evaluate", flaky)
+    monkeypatch.setattr(EvalContext, "resolve", flaky)
     for _ in range(4):
         instance.log({"loss": 5.0})
     assert compiled.rule.enabled is True

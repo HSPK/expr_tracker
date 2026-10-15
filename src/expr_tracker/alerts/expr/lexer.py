@@ -44,53 +44,9 @@ class Token:
 
 
 def tokenize(source: str) -> list[Token]:
-    tokens: list[Token] = []
-    i, n = 0, len(source)
-    while i < n:
-        ch = source[i]
-        if ch.isspace():
-            i += 1
-            continue
-        start = i
-        if ch in QUOTES:
-            end = source.find(ch, i + 1)
-            if end < 0:
-                raise ExprSyntaxError(f"Unterminated {ch}quoted name{ch}", source, i)
-            tokens.append(Token(NAME, source[i + 1 : end], start))
-            i = end + 1
-            continue
-        if ch.isdigit() or (ch == "." and i + 1 < n and source[i + 1].isdigit()):
-            i = _scan_number(source, i)
-            text = source[start:i]
-            unit_end, seconds = _scan_duration_unit(source, i, float(text))
-            if seconds is not None:
-                tokens.append(Token(DURATION, seconds, start))
-                i = unit_end
-            else:
-                tokens.append(Token(NUMBER, float(text), start))
-            continue
-        if ch.isalpha() or ch == "_":
-            i = scan_name(source, i)
-            word = source[start:i]
-            tokens.append(
-                Token(
-                    OP if word in KEYWORDS and word not in ("true", "false") else NAME,
-                    word,
-                    start,
-                )
-            )
-            continue
-        if source[i : i + 2] in TWO_CHAR_OPS:
-            tokens.append(Token(OP, source[i : i + 2], start))
-            i += 2
-            continue
-        if ch in ONE_CHAR_OPS:
-            tokens.append(Token(OP, ch, start))
-            i += 1
-            continue
-        raise ExprSyntaxError(f"Unexpected character {ch!r}", source, i)
-    tokens.append(Token(EOF, None, n))
-    return tokens
+    from ..._native import alert_tokenize
+
+    return alert_tokenize(source)
 
 
 def parse_duration(text: str) -> float:
@@ -120,36 +76,6 @@ def scan_name(source: str, i: int) -> int:
     A ``/`` only joins the name when a name character follows it immediately, so
     division has to be spaced: ``a / b`` divides, ``a/b`` is one metric.
     """
-    n = len(source)
-    while i < n and (
-        is_name_char(source[i])
-        or (source[i] == "/" and i + 1 < n and is_name_char(source[i + 1]))
-    ):
-        i += 1
-    return i
+    from ..._native import alert_scan_name
 
-
-def _scan_number(source: str, i: int) -> int:
-    n = len(source)
-    while i < n and (source[i].isdigit() or source[i] == "."):
-        i += 1
-    if i < n and source[i] in "eE":
-        j = i + 1
-        if j < n and source[j] in "+-":
-            j += 1
-        if j < n and source[j].isdigit():
-            i = j
-            while i < n and source[i].isdigit():
-                i += 1
-    return i
-
-
-def _scan_duration_unit(source: str, i: int, value: float) -> tuple[int, float | None]:
-    n = len(source)
-    for unit, scale in sorted(DURATION_UNITS, key=lambda item: -len(item[0])):
-        end = i + len(unit)
-        if source[i:end] == unit and (
-            end >= n or not (source[end].isalnum() or source[end] in "_.")
-        ):
-            return end, value * scale
-    return i, None
+    return alert_scan_name(source, i)

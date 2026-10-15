@@ -271,7 +271,13 @@ def test_step_policy_allow_accepts_out_of_order_writes(tmp_path):
 def test_long_training_step_keeps_spans_and_metrics_together(tmp_path, monkeypatch):
     now = time.time()
     monkeypatch.setattr(time, "time", lambda: now)
-    monkeypatch.setattr(time, "perf_counter", lambda: now)
+    from expr_tracker._native import NativeSpan
+
+    from expr_tracker import spans as spans_module
+
+    monkeypatch.setattr(
+        spans_module, "NativeSpan", lambda: NativeSpan(clock=lambda: now)
+    )
     run = et.init(
         project="demo",
         name="long-step",

@@ -179,9 +179,11 @@ def test_broken_rule_is_disabled_after_repeated_errors(monkeypatch):
     def explode(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("expr_tracker.alerts.engine.evaluate", explode)
     for _ in range(4):
-        h.feed(loss=10)
+        compiled = next(iter(h.engine.rules.values()))
+        context = h._context({"loss": 10})
+        monkeypatch.setattr(context, "resolve", explode)
+        h.engine._evaluate(compiled, context, {"loss": 10})
     assert h.engine.list_rules()[0].enabled is False
 
 

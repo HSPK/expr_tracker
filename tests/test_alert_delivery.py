@@ -1,7 +1,6 @@
 """Unit tests for alert delivery: webhook transport, retries and queue policies."""
 
 import json
-import queue
 import threading
 import time
 import urllib.error
@@ -241,14 +240,18 @@ def test_retries_are_capped(monkeypatch):
         dispatcher.close()
 
 
-def test_retry_after_bounds_the_wait(monkeypatch):
-    waits = []
-    monkeypatch.setattr(time, "sleep", waits.append)
-    handler = Recorder(failures=1, retry_after=0.05)
-    dispatcher = dispatcher_for(handler, max_retries=2, backoff_initial=10)
+def test_retry_after_bounds_the_wait():
+    handler = Recorder(failures=1, retry_after=0.04)
+    dispatcher = dispatcher_for(
+        handler,
+        max_retries=2,
+        backoff_initial=10,
+        backoff_max=0.06,
+    )
     try:
+        started = time.monotonic()
         dispatcher.send(message())
-        assert waits and max(waits) <= 10
+        assert 0.04 <= time.monotonic() - started < 1.0
         assert len(handler.sent) == 1
     finally:
         dispatcher.close()
@@ -319,13 +322,12 @@ def test_rate_limit_queue_mode_gives_up_when_stopping():
     )
     try:
         dispatcher.send(message(text="first"))
-        dispatcher._stopping.set()  # a shutdown must not block on the bucket
+        dispatcher.close()  # a shutdown must not block on the bucket
         started = time.monotonic()
         dispatcher.send(message(text="second"))
         assert time.monotonic() - started < 5
         assert len(handler.sent) == 1
     finally:
-        dispatcher._stopping.clear()
         dispatcher.close()
 
 
@@ -489,5 +491,5 @@ def test_queue_module_is_not_leaked_between_channels():
     finally:
         dispatcher.close()
     assert len(a.sent) == len(b.sent) == 1
-    assert runtimes[0].queue is not runtimes[1].queue
-    assert isinstance(runtimes[0].queue, queue.Queue)
+    assert runtimes[0]._native is not runtimes[1]._native
+    assert all(runtime.unfinished_tasks == 0 for runtime in runtimes)
